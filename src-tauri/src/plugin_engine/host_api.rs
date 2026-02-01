@@ -5,6 +5,7 @@ pub fn inject_host_api<'js>(
     ctx: &Ctx<'js>,
     plugin_id: &str,
     app_data_dir: &PathBuf,
+    app_version: &str,
 ) -> rquickjs::Result<()> {
     let globals = ctx.globals();
     let probe_ctx = Object::new(ctx.clone())?;
@@ -12,7 +13,7 @@ pub fn inject_host_api<'js>(
     probe_ctx.set("nowIso", iso_now())?;
 
     let app_obj = Object::new(ctx.clone())?;
-    app_obj.set("version", "0.0.1")?;
+    app_obj.set("version", app_version)?;
     app_obj.set("platform", std::env::consts::OS)?;
     app_obj.set("appDataDir", app_data_dir.to_string_lossy().to_string())?;
     let plugin_data_dir = app_data_dir.join("plugins_data").join(plugin_id);

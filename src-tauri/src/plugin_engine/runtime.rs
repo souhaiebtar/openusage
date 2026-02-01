@@ -34,7 +34,11 @@ pub struct PluginOutput {
     pub lines: Vec<MetricLine>,
 }
 
-pub fn run_probe(plugin: &LoadedPlugin, app_data_dir: &PathBuf) -> PluginOutput {
+pub fn run_probe(
+    plugin: &LoadedPlugin,
+    app_data_dir: &PathBuf,
+    app_version: &str,
+) -> PluginOutput {
     let fallback = error_output(plugin, "runtime error".to_string());
 
     let rt = match Runtime::new() {
@@ -53,7 +57,7 @@ pub fn run_probe(plugin: &LoadedPlugin, app_data_dir: &PathBuf) -> PluginOutput 
     let app_data = app_data_dir.clone();
 
     ctx.with(|ctx| {
-        if host_api::inject_host_api(&ctx, &plugin_id, &app_data).is_err() {
+        if host_api::inject_host_api(&ctx, &plugin_id, &app_data, app_version).is_err() {
             return error_output(plugin, "host api injection failed".to_string());
         }
         if host_api::patch_http_wrapper(&ctx).is_err() {
@@ -119,8 +123,12 @@ pub fn run_probe(plugin: &LoadedPlugin, app_data_dir: &PathBuf) -> PluginOutput 
 pub fn run_all_probes(
     plugins: &[LoadedPlugin],
     app_data_dir: &PathBuf,
+    app_version: &str,
 ) -> Vec<PluginOutput> {
-    plugins.iter().map(|p| run_probe(p, app_data_dir)).collect()
+    plugins
+        .iter()
+        .map(|p| run_probe(p, app_data_dir, app_version))
+        .collect()
 }
 
 fn parse_lines(result: &Object) -> Result<Vec<MetricLine>, String> {

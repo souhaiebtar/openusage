@@ -8,6 +8,7 @@ use std::sync::Mutex;
 pub struct AppState {
     pub plugins: Vec<plugin_engine::manifest::LoadedPlugin>,
     pub app_data_dir: PathBuf,
+    pub app_version: String,
 }
 
 #[tauri::command]
@@ -19,12 +20,16 @@ fn init_panel(app_handle: tauri::AppHandle) {
 fn run_plugin_probes(
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Vec<plugin_engine::runtime::PluginOutput> {
-    let (plugins, app_data_dir) = {
+    let (plugins, app_data_dir, app_version) = {
         let locked = state.lock().expect("plugin state poisoned");
-        (locked.plugins.clone(), locked.app_data_dir.clone())
+        (
+            locked.plugins.clone(),
+            locked.app_data_dir.clone(),
+            locked.app_version.clone(),
+        )
     };
 
-    plugin_engine::runtime::run_all_probes(&plugins, &app_data_dir)
+    plugin_engine::runtime::run_all_probes(&plugins, &app_data_dir, &app_version)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -46,6 +51,7 @@ pub fn run() {
             app.manage(Mutex::new(AppState {
                 plugins,
                 app_data_dir,
+                app_version: app.package_info().version.to_string(),
             }));
 
             tray::create(app.handle())?;
