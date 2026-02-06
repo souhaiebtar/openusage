@@ -223,8 +223,6 @@ function SortablePluginItem({
         {plugin.name}
       </span>
 
-      {/* Dynamic key forces remount — workaround for Tauri rendering bug
-         where the checkbox visually disappears after toggling. */}
       <Checkbox
         key={`${plugin.id}-${plugin.enabled}`}
         checked={plugin.enabled}
@@ -376,11 +374,16 @@ export function SettingsPage({
             })}
           </div>
         </div>
-        <label className="mt-2 inline-flex items-center gap-2 text-sm text-foreground">
-          {/* Dynamic key forces remount — workaround for Tauri rendering bug
-             where the checkbox visually disappears after toggling. */}
+        <label
+          className={cn(
+            "mt-2 flex items-center gap-2 text-sm select-none",
+            isTrayPercentageMandatory
+              ? "text-muted-foreground cursor-not-allowed"
+              : "text-foreground"
+          )}
+        >
           <Checkbox
-            key={`tray-show-percentage-${trayShowPercentageChecked}-${isTrayPercentageMandatory}`}
+            key={`tray-pct-${trayShowPercentageChecked}-${isTrayPercentageMandatory}`}
             checked={trayShowPercentageChecked}
             disabled={isTrayPercentageMandatory}
             onCheckedChange={(checked) => {
@@ -388,7 +391,7 @@ export function SettingsPage({
               onTrayShowPercentageChange(checked === true);
             }}
           />
-          <span>Show percentage</span>
+          Show percentage
         </label>
       </section>
       <section>
