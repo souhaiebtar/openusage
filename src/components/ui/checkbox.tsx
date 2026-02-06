@@ -5,13 +5,15 @@ import { cn } from "@/lib/utils";
 interface CheckboxProps {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
   className?: string;
 }
 
-export function Checkbox({ checked, onCheckedChange, className }: CheckboxProps) {
+export function Checkbox({ checked, onCheckedChange, disabled, className }: CheckboxProps) {
   return (
     <BaseCheckbox.Root
       checked={checked}
+      disabled={disabled}
       onCheckedChange={onCheckedChange}
       className={cn(
         "h-4 w-4 shrink-0 rounded border-2 border-muted-foreground",
