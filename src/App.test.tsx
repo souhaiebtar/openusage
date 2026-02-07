@@ -105,7 +105,10 @@ vi.mock("@tauri-apps/api/path", () => ({
 }))
 
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setSize: state.setSizeMock }),
+  getCurrentWindow: () => ({
+    setSize: state.setSizeMock,
+    onFocusChanged: vi.fn(async () => () => {}),
+  }),
   PhysicalSize: class {
     width: number
     height: number

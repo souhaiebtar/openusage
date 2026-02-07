@@ -8,7 +8,7 @@ Cursor, Claude, Codex, and more coming. See your usage at a glance from your men
 
 ## Download
 
-[**Download the latest release**](https://github.com/robinebers/openusage/releases/latest) (macOS, Apple Silicon & Intel)
+[**Download the latest release**](https://github.com/robinebers/openusage/releases/latest) (macOS & Windows)
 
 The app auto-updates. Install once and you're set.
 
@@ -46,7 +46,7 @@ I maintain the project as a guide and quality gatekeeper, but this is your app a
 
 Plugins are currently bundled as we build our the API, but soon will be made flexible so you can build and load their own.
 
-**Windows/Linux:** high-priority and on the todo, but I need testers with some time, willing to help out.
+**Linux:** on the roadmap. If you can help test, [open an issue](https://github.com/robinebers/openusage/issues/new).
 
 ### How to Contribute
 
@@ -83,6 +83,13 @@ Inspired by [CodexBar](https://github.com/steipete/CodexBar) by [@steipete](http
 - React 19, Tailwind 4, Base UI
 - Vite 7, bun
 
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (stable)
+- [bun](https://bun.sh/) (or npm/pnpm)
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`)
+- **Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++" workload, plus [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 10 21H2+ and Windows 11)
+
 ### Build
 
 ```bash
@@ -92,7 +99,10 @@ bun install
 bun tauri build
 ```
 
-Built app lands in `src-tauri/target/release/bundle/`.
+| Platform | Output |
+|----------|--------|
+| **macOS** | `src-tauri/target/release/bundle/dmg/` and `bundle/macos/` |
+| **Windows** | `src-tauri/target/release/openusage.exe` and `bundle/msi/` and `bundle/nsis/` |
 
 ### Development
 
@@ -100,5 +110,7 @@ Built app lands in `src-tauri/target/release/bundle/`.
 bun install
 bun tauri dev
 ```
+
+This compiles the Rust backend and starts the frontend dev server with hot-reload.
 
 </details>
