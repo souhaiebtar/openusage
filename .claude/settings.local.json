@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx tsc:*)",
+      "Bash(./node_modules/.bin/tsc:*)",
+      "Bash(./node_modules/.bin/vitest:*)",
+      "Bash(cargo check:*)",
+      "Bash(bun run build:*)",
+      "Bash(TAURI_SIGNING_PRIVATE_KEY=\"\" bun tauri build:*)",
+      "Bash(set \"TAURI_SIGNING_PRIVATE_KEY= \")",
+      "Bash(bun tauri build:*)"
+    ]
+  }
+}
