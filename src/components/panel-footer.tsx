@@ -50,11 +50,7 @@ function VersionDisplay({
         <span className="text-xs text-muted-foreground">Installing...</span>
       );
     case "error":
-      return (
-        <span className="text-xs text-destructive" title={updateStatus.message}>
-          Update failed
-        </span>
-      );
+      return null;
     default:
       return (
         <button

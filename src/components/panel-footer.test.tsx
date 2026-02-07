@@ -98,7 +98,7 @@ describe("PanelFooter", () => {
     expect(onInstall).toHaveBeenCalledTimes(1)
   })
 
-  it("shows error state", () => {
+  it("hides left status text in error state", () => {
     const { container } = render(
       <PanelFooter
         version="0.0.0"
@@ -108,7 +108,8 @@ describe("PanelFooter", () => {
         {...aboutProps}
       />
     )
-    expect(container.textContent).toContain("Update failed")
+    expect(container.textContent).not.toContain("OpenUsage 0.0.0")
+    expect(container.textContent).not.toContain("Update failed")
   })
 
   it("shows installing state", () => {
