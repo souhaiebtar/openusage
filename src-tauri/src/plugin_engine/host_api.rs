@@ -986,6 +986,37 @@ fn inject_keychain<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, service: String| -> rquickjs::Result<String> {
                 if !cfg!(target_os = "macos") {
+                    if service == "gh:github.com" {
+                        let output = std::process::Command::new("gh")
+                            .args(["auth", "token"])
+                            .output()
+                            .map_err(|e| {
+                                Exception::throw_message(
+                                    &ctx_inner,
+                                    &format!("gh auth token failed: {}", e),
+                                )
+                            })?;
+
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let first_line = stderr.lines().next().unwrap_or("").trim();
+                            return Err(Exception::throw_message(
+                                &ctx_inner,
+                                &format!("gh auth token failed: {}", first_line),
+                            ));
+                        }
+
+                        let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if token.is_empty() {
+                            return Err(Exception::throw_message(
+                                &ctx_inner,
+                                "gh auth token returned empty output",
+                            ));
+                        }
+
+                        return Ok(token);
+                    }
+
                     return Err(Exception::throw_message(
                         &ctx_inner,
                         "keychain API is only supported on macOS",

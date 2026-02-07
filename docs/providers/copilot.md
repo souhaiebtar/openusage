@@ -7,8 +7,12 @@ Tracks GitHub Copilot usage quotas for both paid and free tier users.
 The plugin looks for a GitHub token in this order:
 
 1. **OpenUsage Keychain** (`OpenUsage-copilot`) — Token previously cached by the plugin
-2. **GitHub CLI Keychain** (`gh:github.com`) — Token from `gh auth login`
+2. **GitHub CLI auth** (`gh:github.com`) — Token from `gh auth login`
 3. **State File** (`auth.json`) — Fallback file-based storage
+
+Notes:
+- macOS: reads via native keychain entry lookup.
+- Windows/Linux: resolves `gh:github.com` via `gh auth token`.
 
 ### Setup
 
