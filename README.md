@@ -8,7 +8,7 @@ Cursor, Claude, Codex, and more coming. See your usage at a glance from your men
 
 ## Download
 
-[**Download the latest release**](https://github.com/robinebers/openusage/releases/latest) (macOS & Windows)
+[**Download the latest release**](https://github.com/robinebers/openusage/releases/latest) (Windows)
 
 The app auto-updates. Install once and you're set.
 
@@ -99,10 +99,11 @@ bun install
 bun tauri build
 ```
 
-| Platform | Output |
-|----------|--------|
-| **macOS** | `src-tauri/target/release/bundle/dmg/` and `bundle/macos/` |
-| **Windows** | `src-tauri/target/release/openusage.exe` and `bundle/msi/` and `bundle/nsis/` |
+Windows outputs:
+
+- `src-tauri/target/release/openusage.exe`
+- `src-tauri/target/release/bundle/msi/`
+- `src-tauri/target/release/bundle/nsis/`
 
 ### Development
 
@@ -112,5 +113,24 @@ bun tauri dev
 ```
 
 This compiles the Rust backend and starts the frontend dev server with hot-reload.
+
+### Release (Windows only, GitHub Actions)
+
+This repo publishes Windows release artifacts via `.github/workflows/publish.yml`.
+
+1. Ensure versions match in:
+   - `package.json`
+   - `src-tauri/Cargo.toml`
+   - `src-tauri/tauri.conf.json`
+2. Create and push a tag:
+
+```bash
+git tag v0.5.0
+git push origin v0.5.0
+```
+
+3. GitHub Actions builds and publishes Windows installers to the matching GitHub Release.
+
+Manual trigger is also supported via **Actions > Publish** with a `vX.Y.Z` tag input.
 
 </details>
