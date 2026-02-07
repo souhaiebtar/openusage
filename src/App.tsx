@@ -50,6 +50,10 @@ const MAX_HEIGHT_FRACTION_OF_MONITOR = 0.8;
 const TRAY_SETTINGS_DEBOUNCE_MS = 2000;
 const TRAY_PROBE_DEBOUNCE_MS = 500;
 const IS_MACOS = navigator.userAgent.includes("Macintosh") || navigator.userAgent.includes("Mac OS");
+const IS_WINDOWS = navigator.userAgent.includes("Windows");
+const TRAY_GAUGE_ICON_CANDIDATES = IS_WINDOWS
+  ? ["icons/icon.png"]
+  : ["icons/tray-icon.png"]
 // macOS: arrow(7) + wrapper pt-1.5(6) + bottom p-6(24) = 37. Windows: no arrow, just padding.
 const ARROW_OVERHEAD_PX = IS_MACOS ? 37 : 30;
 
@@ -58,6 +62,17 @@ type PluginState = {
   loading: boolean
   error: string | null
   lastManualRefreshAt: number | null
+}
+
+async function resolveTrayGaugeIconPath(): Promise<string | null> {
+  for (const iconPath of TRAY_GAUGE_ICON_CANDIDATES) {
+    try {
+      return await resolveResource(iconPath)
+    } catch {
+      // Try next candidate.
+    }
+  }
+  return null
 }
 
 function App() {
@@ -123,6 +138,10 @@ function App() {
 
       const tray = trayRef.current
       if (!tray) {
+        trayUpdatePendingRef.current = false
+        return
+      }
+      if (IS_WINDOWS) {
         trayUpdatePendingRef.current = false
         return
       }
@@ -221,10 +240,11 @@ function App() {
         trayRef.current = tray
         trayInitializedRef.current = true
         setTrayReady(true)
-        try {
-          trayGaugeIconPathRef.current = await resolveResource("icons/tray-icon.png")
-        } catch (e) {
-          console.error("Failed to resolve tray gauge icon resource:", e)
+        const trayGaugeIconPath = await resolveTrayGaugeIconPath()
+        if (trayGaugeIconPath) {
+          trayGaugeIconPathRef.current = trayGaugeIconPath
+        } else {
+          console.error("Failed to resolve tray gauge icon resource:", new Error("No tray icon resource found"))
         }
       } catch (e) {
         console.error("Failed to load tray icon handle:", e)

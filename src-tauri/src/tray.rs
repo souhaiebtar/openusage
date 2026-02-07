@@ -1,7 +1,7 @@
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::path::BaseDirectory;
-use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
@@ -55,11 +55,30 @@ fn show_panel_with_init(app_handle: &AppHandle) {
     show_panel(app_handle);
 }
 
-pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+fn should_toggle_panel(button: MouseButton, button_state: MouseButtonState) -> bool {
+    button == MouseButton::Left && button_state == MouseButtonState::Up
+}
+
+fn load_tray_icon(app_handle: &AppHandle) -> tauri::Result<Image<'static>> {
+    #[cfg(target_os = "windows")]
+    {
+        let icon_png_path = app_handle
+            .path()
+            .resolve("icons/icon.png", BaseDirectory::Resource)?;
+        return Image::from_path(icon_png_path);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
     let tray_icon_path = app_handle
         .path()
         .resolve("icons/tray-icon.png", BaseDirectory::Resource)?;
-    let icon = Image::from_path(tray_icon_path)?;
+    Image::from_path(tray_icon_path)
+    }
+}
+
+pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+    let icon = load_tray_icon(app_handle)?;
 
     // Load persisted log level
     let current_level = get_stored_log_level(app_handle);
@@ -143,10 +162,13 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
             let app_handle = tray.app_handle();
 
             if let TrayIconEvent::Click {
-                button_state, rect, ..
+                button,
+                button_state,
+                rect,
+                ..
             } = event
             {
-                if button_state == MouseButtonState::Up {
+                if should_toggle_panel(button, button_state) {
                     ensure_panel_initialized(app_handle);
 
                     if is_panel_visible(app_handle) {
@@ -165,4 +187,25 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
         .build(app_handle)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_toggle_panel;
+    use tauri::tray::{MouseButton, MouseButtonState};
+
+    #[test]
+    fn toggles_panel_on_left_button_up() {
+        assert!(should_toggle_panel(MouseButton::Left, MouseButtonState::Up));
+    }
+
+    #[test]
+    fn does_not_toggle_panel_on_right_button_up() {
+        assert!(!should_toggle_panel(MouseButton::Right, MouseButtonState::Up));
+    }
+
+    #[test]
+    fn does_not_toggle_panel_on_left_button_down() {
+        assert!(!should_toggle_panel(MouseButton::Left, MouseButtonState::Down));
+    }
 }

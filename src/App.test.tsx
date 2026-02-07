@@ -853,7 +853,7 @@ describe("App", () => {
 
   it("logs when tray gauge resource cannot be resolved", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-    state.resolveResourceMock.mockRejectedValueOnce(new Error("no resource"))
+    state.resolveResourceMock.mockRejectedValue(new Error("no resource"))
     render(<App />)
     await waitFor(() => expect(errorSpy).toHaveBeenCalled())
     errorSpy.mockRestore()
