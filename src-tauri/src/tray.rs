@@ -3,10 +3,9 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_nspanel::ManagerExt;
 use tauri_plugin_store::StoreExt;
 
-use crate::panel::position_panel_at_tray_icon;
+use crate::panel::{position_panel_at_tray_icon, show_panel, hide_panel, is_panel_visible};
 
 const LOG_LEVEL_STORE_KEY: &str = "logLevel";
 
@@ -45,32 +44,15 @@ fn set_stored_log_level(app_handle: &AppHandle, level: log::LevelFilter) {
 }
 
 
-macro_rules! get_or_init_panel {
-    ($app_handle:expr) => {
-        match $app_handle.get_webview_panel("main") {
-            Ok(panel) => Some(panel),
-            Err(_) => {
-                if let Err(err) = crate::panel::init($app_handle) {
-                    log::error!("Failed to init panel: {}", err);
-                    None
-                } else {
-                    match $app_handle.get_webview_panel("main") {
-                        Ok(panel) => Some(panel),
-                        Err(err) => {
-                            log::error!("Panel missing after init: {:?}", err);
-                            None
-                        }
-                    }
-                }
-            }
-        }
-    };
+fn ensure_panel_initialized(app_handle: &AppHandle) {
+    if let Err(err) = crate::panel::init(app_handle) {
+        log::error!("Failed to init panel: {}", err);
+    }
 }
 
-fn show_panel(app_handle: &AppHandle) {
-    if let Some(panel) = get_or_init_panel!(app_handle) {
-        panel.show_and_make_key();
-    }
+fn show_panel_with_init(app_handle: &AppHandle) {
+    ensure_panel_initialized(app_handle);
+    show_panel(app_handle);
 }
 
 pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
@@ -124,15 +106,15 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
             log::debug!("tray menu: {}", event.id.as_ref());
             match event.id.as_ref() {
                 "show_stats" => {
-                    show_panel(app_handle);
+                    show_panel_with_init(app_handle);
                     let _ = app_handle.emit("tray:navigate", "home");
                 }
                 "go_to_settings" => {
-                    show_panel(app_handle);
+                    show_panel_with_init(app_handle);
                     let _ = app_handle.emit("tray:navigate", "settings");
                 }
                 "about" => {
-                    show_panel(app_handle);
+                    show_panel_with_init(app_handle);
                     let _ = app_handle.emit("tray:show-about", ());
                 }
                 "quit" => {
@@ -165,19 +147,17 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
             } = event
             {
                 if button_state == MouseButtonState::Up {
-                    let Some(panel) = get_or_init_panel!(app_handle) else {
-                        return;
-                    };
+                    ensure_panel_initialized(app_handle);
 
-                    if panel.is_visible() {
+                    if is_panel_visible(app_handle) {
                         log::debug!("tray click: hiding panel");
-                        panel.hide();
+                        hide_panel(app_handle);
                         return;
                     }
                     log::debug!("tray click: showing panel");
 
-                    // macOS quirk: must show window before positioning to another monitor
-                    panel.show_and_make_key();
+                    // Must show window before positioning to another monitor
+                    show_panel(app_handle);
                     position_panel_at_tray_icon(app_handle, rect.position, rect.size);
                 }
             }
