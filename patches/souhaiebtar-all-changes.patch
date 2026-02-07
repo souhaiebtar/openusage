@@ -1,0 +1,2121 @@
+From a96c00f41e67a1f37c2af702dfd85b4433625551 Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 15:43:42 +0100
+Subject: [PATCH 1/8] feat: add Windows support with system tray integration
+
+- Move tauri-nspanel to macOS-only dependency
+- Create platform-specific panel modules (panel_macos.rs, panel_windows.rs)
+- Update panel.rs as cross-platform dispatcher
+- Update tray.rs to use platform-agnostic panel API
+- Fix get_log_path to return correct paths on Windows
+
+The app now shows a system tray icon on Windows with click-to-toggle
+panel behavior, similar to the macOS menu bar experience.
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ src-tauri/Cargo.toml           |   2 +-
+ src-tauri/src/lib.rs           |  56 +++++++++---
+ src-tauri/src/panel.rs         | 145 ++++-------------------------
+ src-tauri/src/panel_macos.rs   | 162 +++++++++++++++++++++++++++++++++
+ src-tauri/src/panel_windows.rs |  87 ++++++++++++++++++
+ src-tauri/src/tray.rs          |  52 ++++-------
+ 6 files changed, 326 insertions(+), 178 deletions(-)
+ create mode 100644 src-tauri/src/panel_macos.rs
+ create mode 100644 src-tauri/src/panel_windows.rs
+
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 6ea7d9a345838d9e9071218f86356a3509094544..ae91ca6dbc38c3b396e94f87d5d8c7d177ec6a3f 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -22,7 +22,6 @@ tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-pn
+ tauri-plugin-opener = "2"
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+-tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+ time = { version = "0.3.47", features = ["formatting"] }
+ dirs = "6"
+ log = "0.4"
+@@ -39,6 +38,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+ regex-lite = "0.1.9"
+ 
+ [target.'cfg(target_os = "macos")'.dependencies]
++tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+ objc2 = "0.6"
+ objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString"] }
+ objc2-web-kit = { version = "0.3", features = ["WKPreferences", "WKWebView", "WKWebViewConfiguration"] }
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 6c5fcda9539dbb7c4481c4de4d1b67bb0c0c3235..c872171592a95a326d2e245cf6d28928e4761fb8 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,6 +1,12 @@
+ #[cfg(target_os = "macos")]
+ mod app_nap;
+ mod panel;
++#[cfg(target_os = "macos")]
++mod panel_macos;
++#[cfg(target_os = "windows")]
++mod panel_windows;
++#[cfg(not(any(target_os = "macos", target_os = "windows")))]
++mod panel_windows; // Fallback for other platforms
+ mod plugin_engine;
+ mod tray;
+ #[cfg(target_os = "macos")]
+@@ -72,10 +78,7 @@ fn init_panel(app_handle: tauri::AppHandle) {
+ 
+ #[tauri::command]
+ fn hide_panel(app_handle: tauri::AppHandle) {
+-    use tauri_nspanel::ManagerExt;
+-    if let Ok(panel) = app_handle.get_webview_panel("main") {
+-        panel.hide();
+-    }
++    panel::hide_panel(&app_handle);
+ }
+ 
+ #[tauri::command]
+@@ -201,12 +204,35 @@ async fn start_probe_batch(
+ 
+ #[tauri::command]
+ fn get_log_path(app_handle: tauri::AppHandle) -> Result<String, String> {
+-    // macOS log directory: ~/Library/Logs/{bundleIdentifier}
+-    let home = dirs::home_dir().ok_or("no home dir")?;
+-    let bundle_id = app_handle.config().identifier.clone();
+-    let log_dir = home.join("Library").join("Logs").join(&bundle_id);
+-    let log_file = log_dir.join(format!("{}.log", app_handle.package_info().name));
+-    Ok(log_file.to_string_lossy().to_string())
++    #[cfg(target_os = "macos")]
++    {
++        // macOS log directory: ~/Library/Logs/{bundleIdentifier}
++        let home = dirs::home_dir().ok_or("no home dir")?;
++        let bundle_id = app_handle.config().identifier.clone();
++        let log_dir = home.join("Library").join("Logs").join(&bundle_id);
++        let log_file = log_dir.join(format!("{}.log", app_handle.package_info().name));
++        Ok(log_file.to_string_lossy().to_string())
++    }
++
++    #[cfg(target_os = "windows")]
++    {
++        // Windows log directory: %LOCALAPPDATA%/{bundleIdentifier}/logs
++        let local_app_data = dirs::data_local_dir().ok_or("no local app data dir")?;
++        let bundle_id = app_handle.config().identifier.clone();
++        let log_dir = local_app_data.join(&bundle_id).join("logs");
++        let log_file = log_dir.join(format!("{}.log", app_handle.package_info().name));
++        Ok(log_file.to_string_lossy().to_string())
++    }
++
++    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
++    {
++        // Linux and others: ~/.local/share/{bundleIdentifier}/logs
++        let data_dir = dirs::data_dir().ok_or("no data dir")?;
++        let bundle_id = app_handle.config().identifier.clone();
++        let log_dir = data_dir.join(&bundle_id).join("logs");
++        let log_file = log_dir.join(format!("{}.log", app_handle.package_info().name));
++        Ok(log_file.to_string_lossy().to_string())
++    }
+ }
+ 
+ #[tauri::command]
+@@ -257,11 +283,15 @@ pub fn run() {
+     let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+     let _guard = runtime.enter();
+ 
+-    tauri::Builder::default()
++    let builder = tauri::Builder::default()
+         .plugin(tauri_plugin_aptabase::Builder::new("A-US-6435241436").build())
+         .plugin(tauri_plugin_opener::init())
+-        .plugin(tauri_plugin_store::Builder::default().build())
+-        .plugin(tauri_nspanel::init())
++        .plugin(tauri_plugin_store::Builder::default().build());
++
++    #[cfg(target_os = "macos")]
++    let builder = builder.plugin(tauri_nspanel::init());
++
++    builder
+         .plugin(
+             tauri_plugin_log::Builder::new()
+                 .targets([
+diff --git a/src-tauri/src/panel.rs b/src-tauri/src/panel.rs
+index 3fba614a24a9ef977c0e7bb4e6031753c1e68210..852806697c6e85b5fdc540c4e2f18e6a18a804e8 100644
+--- a/src-tauri/src/panel.rs
++++ b/src-tauri/src/panel.rs
+@@ -1,133 +1,22 @@
+-use tauri::{Manager, Position, Size};
+-use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt};
+-
+-// Define our panel class and event handler together
+-tauri_panel! {
+-    panel!(OpenUsagePanel {
+-        config: {
+-            can_become_key_window: true,
+-            is_floating_panel: true
+-        }
+-    })
+-
+-    panel_event!(OpenUsagePanelEventHandler {
+-        window_did_resign_key(notification: &NSNotification) -> ()
+-    })
++//! Platform-specific panel implementation
++//!
++//! On macOS, uses tauri-nspanel for floating panel behavior.
++//! On Windows, uses a regular window with show/hide.
++
++#[cfg(target_os = "macos")]
++mod platform {
++    pub use crate::panel_macos::*;
+ }
+ 
+-pub fn init(app_handle: &tauri::AppHandle) -> tauri::Result<()> {
+-    if app_handle.get_webview_panel("main").is_ok() {
+-        return Ok(());
+-    }
+-
+-    let window = app_handle.get_webview_window("main").unwrap();
+-
+-    let panel = window.to_panel::<OpenUsagePanel>()?;
+-
+-    // Disable native shadow - it causes gray border on transparent windows
+-    // Let CSS handle shadow via shadow-xl class
+-    panel.set_has_shadow(false);
+-    panel.set_opaque(false);
+-
+-    // Configure panel behavior
+-    panel.set_level(PanelLevel::MainMenu.value() + 1);
+-
+-    panel.set_collection_behavior(
+-        CollectionBehavior::new()
+-            .can_join_all_spaces()
+-            .stationary()
+-            .full_screen_auxiliary()
+-            .value(),
+-    );
+-
+-    panel.set_style_mask(StyleMask::empty().nonactivating_panel().value());
+-
+-    // Set up event handler to hide panel when it loses focus
+-    let event_handler = OpenUsagePanelEventHandler::new();
+-
+-    let handle = app_handle.clone();
+-    event_handler.window_did_resign_key(move |_notification| {
+-        if let Ok(panel) = handle.get_webview_panel("main") {
+-            panel.hide();
+-        }
+-    });
+-
+-    panel.set_event_handler(Some(event_handler.as_ref()));
+-
+-    Ok(())
++#[cfg(target_os = "windows")]
++mod platform {
++    pub use crate::panel_windows::*;
+ }
+ 
+-pub fn position_panel_at_tray_icon(
+-    app_handle: &tauri::AppHandle,
+-    icon_position: Position,
+-    icon_size: Size,
+-) {
+-    let window = app_handle.get_webview_window("main").unwrap();
+-
+-    // Extract icon position (tray events emit physical coords)
+-    let (icon_phys_x, icon_phys_y) = match &icon_position {
+-        Position::Physical(pos) => (pos.x, pos.y),
+-        Position::Logical(pos) => (pos.x as i32, pos.y as i32),
+-    };
+-
+-    // Find the monitor containing this physical position
+-    // Note: monitor_from_point expects logical coords but tray events give physical,
+-    // so we manually check using physical coordinates
+-    let monitors = window.available_monitors().expect("failed to get monitors");
+-    let mut found_monitor = None;
+-
+-    for m in monitors {
+-        let pos = m.position();
+-        let size = m.size();
+-        let x_in = icon_phys_x >= pos.x && icon_phys_x < pos.x + size.width as i32;
+-        let y_in = icon_phys_y >= pos.y && icon_phys_y < pos.y + size.height as i32;
+-
+-        if x_in && y_in {
+-            found_monitor = Some(m);
+-            break;
+-        }
+-    }
+-
+-    let monitor = found_monitor.expect("no monitor found containing tray icon position");
+-
+-    let scale_factor = monitor.scale_factor();
+-    // Window size in physical pixels (outer_size is physical on macOS)
+-    let window_size = window.outer_size().unwrap();
+-    let window_width_phys = window_size.width as i32;
+-
+-    // Convert icon position/size to physical coordinates
+-    let (icon_phys_x, icon_phys_y, icon_width_phys, icon_height_phys) = match (icon_position, icon_size) {
+-        (Position::Physical(pos), Size::Physical(size)) => (pos.x, pos.y, size.width as i32, size.height as i32),
+-        (Position::Logical(pos), Size::Logical(size)) => (
+-            (pos.x * scale_factor) as i32,
+-            (pos.y * scale_factor) as i32,
+-            (size.width * scale_factor) as i32,
+-            (size.height * scale_factor) as i32,
+-        ),
+-        (Position::Physical(pos), Size::Logical(size)) => (
+-            pos.x,
+-            pos.y,
+-            (size.width * scale_factor) as i32,
+-            (size.height * scale_factor) as i32,
+-        ),
+-        (Position::Logical(pos), Size::Physical(size)) => (
+-            (pos.x * scale_factor) as i32,
+-            (pos.y * scale_factor) as i32,
+-            size.width as i32,
+-            size.height as i32,
+-        ),
+-    };
+-
+-    let icon_center_x_phys = icon_phys_x + (icon_width_phys / 2);
+-    let panel_x_phys = icon_center_x_phys - (window_width_phys / 2);
+-    let padding_phys = 0;
+-    // Nudge the panel slightly upward so it visually aligns tighter to the tray.
+-    // Use logical points (not physical px) so the offset looks consistent on Retina.
+-    let nudge_up_points: f64 = 6.0;
+-    let nudge_up_phys = (nudge_up_points * scale_factor).round() as i32;
+-    let panel_y_phys = icon_phys_y + icon_height_phys + padding_phys - nudge_up_phys;
+-
+-    let final_pos = tauri::PhysicalPosition::new(panel_x_phys, panel_y_phys);
+-
+-    let _ = window.set_position(final_pos);
++#[cfg(not(any(target_os = "macos", target_os = "windows")))]
++mod platform {
++    // Fallback for Linux and other platforms - use Windows-style implementation
++    pub use crate::panel_windows::*;
+ }
++
++pub use platform::*;
+diff --git a/src-tauri/src/panel_macos.rs b/src-tauri/src/panel_macos.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..0bdb126f9906f8188fc4961e4d56ad68c5ac49b1
+--- /dev/null
++++ b/src-tauri/src/panel_macos.rs
+@@ -0,0 +1,162 @@
++use tauri::{Manager, Position, Size};
++use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt};
++
++// Re-export ManagerExt for use by other modules
++pub use tauri_nspanel::ManagerExt as NsPanelManagerExt;
++
++// Define our panel class and event handler together
++tauri_panel! {
++    panel!(OpenUsagePanel {
++        config: {
++            can_become_key_window: true,
++            is_floating_panel: true
++        }
++    })
++
++    panel_event!(OpenUsagePanelEventHandler {
++        window_did_resign_key(notification: &NSNotification) -> ()
++    })
++}
++
++pub fn init(app_handle: &tauri::AppHandle) -> tauri::Result<()> {
++    if app_handle.get_webview_panel("main").is_ok() {
++        return Ok(());
++    }
++
++    let window = app_handle.get_webview_window("main").unwrap();
++
++    let panel = window.to_panel::<OpenUsagePanel>()?;
++
++    // Disable native shadow - it causes gray border on transparent windows
++    // Let CSS handle shadow via shadow-xl class
++    panel.set_has_shadow(false);
++    panel.set_opaque(false);
++
++    // Configure panel behavior
++    panel.set_level(PanelLevel::MainMenu.value() + 1);
++
++    panel.set_collection_behavior(
++        CollectionBehavior::new()
++            .can_join_all_spaces()
++            .stationary()
++            .full_screen_auxiliary()
++            .value(),
++    );
++
++    panel.set_style_mask(StyleMask::empty().nonactivating_panel().value());
++
++    // Set up event handler to hide panel when it loses focus
++    let event_handler = OpenUsagePanelEventHandler::new();
++
++    let handle = app_handle.clone();
++    event_handler.window_did_resign_key(move |_notification| {
++        if let Ok(panel) = handle.get_webview_panel("main") {
++            panel.hide();
++        }
++    });
++
++    panel.set_event_handler(Some(event_handler.as_ref()));
++
++    Ok(())
++}
++
++pub fn position_panel_at_tray_icon(
++    app_handle: &tauri::AppHandle,
++    icon_position: Position,
++    icon_size: Size,
++) {
++    let window = app_handle.get_webview_window("main").unwrap();
++
++    // Extract icon position (tray events emit physical coords)
++    let (icon_phys_x, icon_phys_y) = match &icon_position {
++        Position::Physical(pos) => (pos.x, pos.y),
++        Position::Logical(pos) => (pos.x as i32, pos.y as i32),
++    };
++
++    // Find the monitor containing this physical position
++    // Note: monitor_from_point expects logical coords but tray events give physical,
++    // so we manually check using physical coordinates
++    let monitors = window.available_monitors().expect("failed to get monitors");
++    let mut found_monitor = None;
++
++    for m in monitors {
++        let pos = m.position();
++        let size = m.size();
++        let x_in = icon_phys_x >= pos.x && icon_phys_x < pos.x + size.width as i32;
++        let y_in = icon_phys_y >= pos.y && icon_phys_y < pos.y + size.height as i32;
++
++        if x_in && y_in {
++            found_monitor = Some(m);
++            break;
++        }
++    }
++
++    let monitor = found_monitor.expect("no monitor found containing tray icon position");
++
++    let scale_factor = monitor.scale_factor();
++    // Window size in physical pixels (outer_size is physical on macOS)
++    let window_size = window.outer_size().unwrap();
++    let window_width_phys = window_size.width as i32;
++
++    // Convert icon position/size to physical coordinates
++    let (icon_phys_x, icon_phys_y, icon_width_phys, icon_height_phys) = match (icon_position, icon_size) {
++        (Position::Physical(pos), Size::Physical(size)) => (pos.x, pos.y, size.width as i32, size.height as i32),
++        (Position::Logical(pos), Size::Logical(size)) => (
++            (pos.x * scale_factor) as i32,
++            (pos.y * scale_factor) as i32,
++            (size.width * scale_factor) as i32,
++            (size.height * scale_factor) as i32,
++        ),
++        (Position::Physical(pos), Size::Logical(size)) => (
++            pos.x,
++            pos.y,
++            (size.width * scale_factor) as i32,
++            (size.height * scale_factor) as i32,
++        ),
++        (Position::Logical(pos), Size::Physical(size)) => (
++            (pos.x * scale_factor) as i32,
++            (pos.y * scale_factor) as i32,
++            size.width as i32,
++            size.height as i32,
++        ),
++    };
++
++    let icon_center_x_phys = icon_phys_x + (icon_width_phys / 2);
++    let panel_x_phys = icon_center_x_phys - (window_width_phys / 2);
++    let padding_phys = 0;
++    // Nudge the panel slightly upward so it visually aligns tighter to the tray.
++    // Use logical points (not physical px) so the offset looks consistent on Retina.
++    let nudge_up_points: f64 = 6.0;
++    let nudge_up_phys = (nudge_up_points * scale_factor).round() as i32;
++    let panel_y_phys = icon_phys_y + icon_height_phys + padding_phys - nudge_up_phys;
++
++    let final_pos = tauri::PhysicalPosition::new(panel_x_phys, panel_y_phys);
++
++    let _ = window.set_position(final_pos);
++}
++
++/// Show the panel and make it key window
++pub fn show_panel(app_handle: &tauri::AppHandle) {
++    if let Ok(panel) = app_handle.get_webview_panel("main") {
++        panel.show_and_make_key();
++    } else if let Err(err) = init(app_handle) {
++        log::error!("Failed to init panel: {}", err);
++    } else if let Ok(panel) = app_handle.get_webview_panel("main") {
++        panel.show_and_make_key();
++    }
++}
++
++/// Hide the panel
++pub fn hide_panel(app_handle: &tauri::AppHandle) {
++    if let Ok(panel) = app_handle.get_webview_panel("main") {
++        panel.hide();
++    }
++}
++
++/// Check if the panel is visible
++pub fn is_panel_visible(app_handle: &tauri::AppHandle) -> bool {
++    app_handle
++        .get_webview_panel("main")
++        .map(|p| p.is_visible())
++        .unwrap_or(false)
++}
+diff --git a/src-tauri/src/panel_windows.rs b/src-tauri/src/panel_windows.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c4c002c33eedbb63e929ea700b9fe657fd1ae90
+--- /dev/null
++++ b/src-tauri/src/panel_windows.rs
+@@ -0,0 +1,87 @@
++use tauri::{Manager, Position, Size};
++
++/// Initialize the panel (no-op on Windows, window is already created)
++pub fn init(_app_handle: &tauri::AppHandle) -> tauri::Result<()> {
++    Ok(())
++}
++
++/// Position the window near the tray icon
++pub fn position_panel_at_tray_icon(
++    app_handle: &tauri::AppHandle,
++    icon_position: Position,
++    icon_size: Size,
++) {
++    let Some(window) = app_handle.get_webview_window("main") else {
++        return;
++    };
++
++    // Extract icon position
++    let (icon_x, icon_y) = match &icon_position {
++        Position::Physical(pos) => (pos.x as f64, pos.y as f64),
++        Position::Logical(pos) => (pos.x, pos.y),
++    };
++
++    let (icon_width, _icon_height) = match &icon_size {
++        Size::Physical(size) => (size.width as f64, size.height as f64),
++        Size::Logical(size) => (size.width, size.height),
++    };
++
++    // Get window size
++    let window_size = window.outer_size().unwrap_or(tauri::PhysicalSize {
++        width: 400,
++        height: 500,
++    });
++
++    // Find the monitor containing the tray icon
++    let monitors = window.available_monitors().unwrap_or_default();
++    let scale_factor = monitors
++        .iter()
++        .find(|m| {
++            let pos = m.position();
++            let size = m.size();
++            icon_x >= pos.x as f64
++                && icon_x < (pos.x + size.width as i32) as f64
++                && icon_y >= pos.y as f64
++                && icon_y < (pos.y + size.height as i32) as f64
++        })
++        .map(|m| m.scale_factor())
++        .unwrap_or(1.0);
++
++    let window_width = window_size.width as f64 / scale_factor;
++    let window_height = window_size.height as f64 / scale_factor;
++
++    // On Windows, tray is typically at bottom-right
++    // Position window above the tray icon, centered horizontally
++    let icon_center_x = icon_x + (icon_width / 2.0);
++    let panel_x = icon_center_x - (window_width / 2.0);
++
++    // Position above the tray icon with some padding
++    let padding = 8.0;
++    let panel_y = icon_y - window_height - padding;
++
++    let final_pos = tauri::LogicalPosition::new(panel_x, panel_y);
++    let _ = window.set_position(final_pos);
++}
++
++/// Show the window
++pub fn show_panel(app_handle: &tauri::AppHandle) {
++    if let Some(window) = app_handle.get_webview_window("main") {
++        let _ = window.show();
++        let _ = window.set_focus();
++    }
++}
++
++/// Hide the window
++pub fn hide_panel(app_handle: &tauri::AppHandle) {
++    if let Some(window) = app_handle.get_webview_window("main") {
++        let _ = window.hide();
++    }
++}
++
++/// Check if the window is visible
++pub fn is_panel_visible(app_handle: &tauri::AppHandle) -> bool {
++    app_handle
++        .get_webview_window("main")
++        .map(|w| w.is_visible().unwrap_or(false))
++        .unwrap_or(false)
++}
+diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
+index 7859ed31fa93f6a2e97fa24bafd43e33183741c1..62e622cae6ae0b5592d75ebd8ed1dc852d0a9a80 100644
+--- a/src-tauri/src/tray.rs
++++ b/src-tauri/src/tray.rs
+@@ -3,10 +3,9 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+ use tauri::path::BaseDirectory;
+ use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
+ use tauri::{AppHandle, Emitter, Manager};
+-use tauri_nspanel::ManagerExt;
+ use tauri_plugin_store::StoreExt;
+ 
+-use crate::panel::position_panel_at_tray_icon;
++use crate::panel::{position_panel_at_tray_icon, show_panel, hide_panel, is_panel_visible};
+ 
+ const LOG_LEVEL_STORE_KEY: &str = "logLevel";
+ 
+@@ -45,32 +44,15 @@ fn set_stored_log_level(app_handle: &AppHandle, level: log::LevelFilter) {
+ }
+ 
+ 
+-macro_rules! get_or_init_panel {
+-    ($app_handle:expr) => {
+-        match $app_handle.get_webview_panel("main") {
+-            Ok(panel) => Some(panel),
+-            Err(_) => {
+-                if let Err(err) = crate::panel::init($app_handle) {
+-                    log::error!("Failed to init panel: {}", err);
+-                    None
+-                } else {
+-                    match $app_handle.get_webview_panel("main") {
+-                        Ok(panel) => Some(panel),
+-                        Err(err) => {
+-                            log::error!("Panel missing after init: {:?}", err);
+-                            None
+-                        }
+-                    }
+-                }
+-            }
+-        }
+-    };
++fn ensure_panel_initialized(app_handle: &AppHandle) {
++    if let Err(err) = crate::panel::init(app_handle) {
++        log::error!("Failed to init panel: {}", err);
++    }
+ }
+ 
+-fn show_panel(app_handle: &AppHandle) {
+-    if let Some(panel) = get_or_init_panel!(app_handle) {
+-        panel.show_and_make_key();
+-    }
++fn show_panel_with_init(app_handle: &AppHandle) {
++    ensure_panel_initialized(app_handle);
++    show_panel(app_handle);
+ }
+ 
+ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+@@ -124,15 +106,15 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+             log::debug!("tray menu: {}", event.id.as_ref());
+             match event.id.as_ref() {
+                 "show_stats" => {
+-                    show_panel(app_handle);
++                    show_panel_with_init(app_handle);
+                     let _ = app_handle.emit("tray:navigate", "home");
+                 }
+                 "go_to_settings" => {
+-                    show_panel(app_handle);
++                    show_panel_with_init(app_handle);
+                     let _ = app_handle.emit("tray:navigate", "settings");
+                 }
+                 "about" => {
+-                    show_panel(app_handle);
++                    show_panel_with_init(app_handle);
+                     let _ = app_handle.emit("tray:show-about", ());
+                 }
+                 "quit" => {
+@@ -165,19 +147,17 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+             } = event
+             {
+                 if button_state == MouseButtonState::Up {
+-                    let Some(panel) = get_or_init_panel!(app_handle) else {
+-                        return;
+-                    };
++                    ensure_panel_initialized(app_handle);
+ 
+-                    if panel.is_visible() {
++                    if is_panel_visible(app_handle) {
+                         log::debug!("tray click: hiding panel");
+-                        panel.hide();
++                        hide_panel(app_handle);
+                         return;
+                     }
+                     log::debug!("tray click: showing panel");
+ 
+-                    // macOS quirk: must show window before positioning to another monitor
+-                    panel.show_and_make_key();
++                    // Must show window before positioning to another monitor
++                    show_panel(app_handle);
+                     position_panel_at_tray_icon(app_handle, rect.position, rect.size);
+                 }
+             }
+-- 
+2.52.0.windows.1
+
+
+From dc4147a93c12015c948fabf88a2765bd152f06cc Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 16:03:50 +0100
+Subject: [PATCH 2/8] fix(windows): improve tray icon visibility and panel
+ behavior
+
+- Use white ink color for tray icon SVGs on Windows (black was invisible
+  on dark taskbar) and disable icon_as_template on non-macOS platforms
+- Hide the upward-pointing tray arrow on Windows (tray is at bottom)
+- Add skipTaskbar and shadow:false to window config for cleaner appearance
+- Set always-on-top when showing panel on Windows
+- Auto-hide panel on focus loss (simulates macOS NSPanel behavior)
+- Adjust outer padding for Windows panel positioning
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ src-tauri/src/panel_windows.rs |  1 +
+ src-tauri/src/tray.rs          |  2 +-
+ src-tauri/tauri.conf.json      |  4 +++-
+ src/App.tsx                    | 29 +++++++++++++++++++++++------
+ src/lib/tray-bars-icon.ts      | 22 ++++++++++++++--------
+ 5 files changed, 42 insertions(+), 16 deletions(-)
+
+diff --git a/src-tauri/src/panel_windows.rs b/src-tauri/src/panel_windows.rs
+index 2c4c002c33eedbb63e929ea700b9fe657fd1ae90..b51c762725fc1bb27088f0505332b82018edac61 100644
+--- a/src-tauri/src/panel_windows.rs
++++ b/src-tauri/src/panel_windows.rs
+@@ -66,6 +66,7 @@ pub fn position_panel_at_tray_icon(
+ /// Show the window
+ pub fn show_panel(app_handle: &tauri::AppHandle) {
+     if let Some(window) = app_handle.get_webview_window("main") {
++        let _ = window.set_always_on_top(true);
+         let _ = window.show();
+         let _ = window.set_focus();
+     }
+diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
+index 62e622cae6ae0b5592d75ebd8ed1dc852d0a9a80..ab1a059e2f07bcf765e5887983c4ca9d4b5ddf06 100644
+--- a/src-tauri/src/tray.rs
++++ b/src-tauri/src/tray.rs
+@@ -98,7 +98,7 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+ 
+     TrayIconBuilder::with_id("tray")
+         .icon(icon)
+-        .icon_as_template(true)
++        .icon_as_template(cfg!(target_os = "macos"))
+         .tooltip("OpenUsage")
+         .menu(&menu)
+         .show_menu_on_left_click(false)
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 0560e3faf041b3be4d0c7b9b5ad1729ddc64fa35..23970afba68dcb355da36fbea25e53b4b9b1c89f 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -19,7 +19,9 @@
+         "resizable": false,
+         "decorations": false,
+         "transparent": true,
+-        "visible": false
++        "visible": false,
++        "skipTaskbar": true,
++        "shadow": false
+       }
+     ],
+     "security": {
+diff --git a/src/App.tsx b/src/App.tsx
+index 650eb8c05bbfee8c6b454ac92d083dc6e6d13f2f..f299c594e071a3148f8996dc378aa693dbb3dad3 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -47,9 +47,11 @@ import {
+ const PANEL_WIDTH = 400;
+ const MAX_HEIGHT_FALLBACK_PX = 600;
+ const MAX_HEIGHT_FRACTION_OF_MONITOR = 0.8;
+-const ARROW_OVERHEAD_PX = 37; // .tray-arrow (7px) + wrapper pt-1.5 (6px) + bottom p-6 (24px)
+ const TRAY_SETTINGS_DEBOUNCE_MS = 2000;
+ const TRAY_PROBE_DEBOUNCE_MS = 500;
++const IS_MACOS = navigator.userAgent.includes("Macintosh") || navigator.userAgent.includes("Mac OS");
++// macOS: arrow(7) + wrapper pt-1.5(6) + bottom p-6(24) = 37. Windows: no arrow, just padding.
++const ARROW_OVERHEAD_PX = IS_MACOS ? 37 : 30;
+ 
+ type PluginState = {
+   data: PluginOutput | null
+@@ -141,7 +143,7 @@ function App() {
+         if (gaugePath) {
+           Promise.all([
+             tray.setIcon(gaugePath),
+-            tray.setIconAsTemplate(true),
++            tray.setIconAsTemplate(IS_MACOS),
+           ])
+             .catch((e) => {
+               console.error("Failed to restore tray gauge icon:", e)
+@@ -172,7 +174,7 @@ function App() {
+         if (gaugePath) {
+           Promise.all([
+             tray.setIcon(gaugePath),
+-            tray.setIconAsTemplate(true),
++            tray.setIconAsTemplate(IS_MACOS),
+           ])
+             .catch((e) => {
+               console.error("Failed to restore tray gauge icon:", e)
+@@ -196,7 +198,7 @@ function App() {
+       renderTrayBarsIcon({ bars, sizePx, style, percentText, providerIconUrl })
+         .then(async (img) => {
+           await tray.setIcon(img)
+-          await tray.setIconAsTemplate(true)
++          await tray.setIconAsTemplate(IS_MACOS)
+         })
+         .catch((e) => {
+           console.error("Failed to update tray icon:", e)
+@@ -305,6 +307,21 @@ function App() {
+     return () => document.removeEventListener("keydown", handleKeyDown)
+   }, [showAbout])
+ 
++  // On Windows, hide panel when it loses focus (simulates NSPanel behavior on macOS)
++  useEffect(() => {
++    if (IS_MACOS || !isTauri()) return
++    let cancelled = false
++    const unlistener = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
++      if (!cancelled && !focused) {
++        invoke("hide_panel").catch(console.error)
++      }
++    })
++    return () => {
++      cancelled = true
++      unlistener.then((fn) => fn())
++    }
++  }, [])
++
+   // Listen for tray menu events
+   useEffect(() => {
+     if (!isTauri()) return
+@@ -827,8 +844,8 @@ function App() {
+   }
+ 
+   return (
+-    <div ref={containerRef} className="flex flex-col items-center p-6 pt-1.5 bg-transparent">
+-      <div className="tray-arrow" />
++    <div ref={containerRef} className={`flex flex-col items-center bg-transparent ${IS_MACOS ? "p-6 pt-1.5" : "p-4 pb-2"}`}>
++      {IS_MACOS && <div className="tray-arrow" />}
+       <div
+         className="relative bg-card rounded-xl overflow-hidden select-none w-full border shadow-lg flex flex-col"
+         style={maxPanelHeightPx ? { maxHeight: `${maxPanelHeightPx - ARROW_OVERHEAD_PX}px` } : undefined}
+diff --git a/src/lib/tray-bars-icon.ts b/src/lib/tray-bars-icon.ts
+index 547455c9e204d1aa7ac9b732bdb3e047ce46a854..d6736dfd5fad17ffad9165b3a943b1815513cb01 100644
+--- a/src/lib/tray-bars-icon.ts
++++ b/src/lib/tray-bars-icon.ts
+@@ -3,6 +3,8 @@ import { Image } from "@tauri-apps/api/image"
+ import type { TrayPrimaryBar } from "@/lib/tray-primary-progress"
+ import type { TrayIconStyle } from "@/lib/settings"
+ 
++const IS_MACOS = navigator.userAgent.includes("Macintosh") || navigator.userAgent.includes("Mac OS")
++
+ function rgbaToImageDataBytes(rgba: Uint8ClampedArray): Uint8Array {
+   // Image.new expects Uint8Array. Uint8ClampedArray shares the same buffer layout.
+   return new Uint8Array(rgba.buffer)
+@@ -215,6 +217,10 @@ export function makeTrayBarsSvg(args: {
+   const remainderOpacity = 0.58
+   const fillOpacity = 1
+ 
++  // macOS template icons use black fills (system recolors via alpha mask).
++  // On Windows the taskbar is dark, so we use white fills directly.
++  const inkColor = IS_MACOS ? "black" : "white"
++
+   const parts: string[] = []
+   parts.push(
+     `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">`
+@@ -228,7 +234,7 @@ export function makeTrayBarsSvg(args: {
+     const radius = Math.max(1, Math.floor(chartSize / 2 - strokeW / 2) + 0.5)
+ 
+     parts.push(
+-      `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="black" stroke-width="${strokeW}" opacity="${trackOpacity}" shape-rendering="geometricPrecision" />`
++      `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${inkColor}" stroke-width="${strokeW}" opacity="${trackOpacity}" shape-rendering="geometricPrecision" />`
+     )
+ 
+     const fraction = barsForStyle[0]?.fraction
+@@ -238,7 +244,7 @@ export function makeTrayBarsSvg(args: {
+         const circumference = 2 * Math.PI * radius
+         const dash = circumference * clamped
+         parts.push(
+-          `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="black" stroke-width="${strokeW}" stroke-linecap="butt" stroke-dasharray="${dash} ${circumference}" transform="rotate(-90 ${cx} ${cy})" opacity="${fillOpacity}" shape-rendering="geometricPrecision" />`
++          `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${inkColor}" stroke-width="${strokeW}" stroke-linecap="butt" stroke-dasharray="${dash} ${circumference}" transform="rotate(-90 ${cx} ${cy})" opacity="${fillOpacity}" shape-rendering="geometricPrecision" />`
+         )
+       }
+     }
+@@ -258,7 +264,7 @@ export function makeTrayBarsSvg(args: {
+       const radius = Math.max(2, iconSize / 2 - 1.5)
+       const strokeW = Math.max(1.5, Math.round(iconSize * 0.14))
+       parts.push(
+-        `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="black" stroke-width="${strokeW}" opacity="${fillOpacity}" shape-rendering="geometricPrecision" />`
++        `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${inkColor}" stroke-width="${strokeW}" opacity="${fillOpacity}" shape-rendering="geometricPrecision" />`
+       )
+     }
+   } else if (style !== "textOnly") {
+@@ -269,7 +275,7 @@ export function makeTrayBarsSvg(args: {
+ 
+       // Track
+       parts.push(
+-        `<rect x="${x}" y="${y}" width="${trackW}" height="${trackH}" rx="${rx}" fill="black" opacity="${trackOpacity}" />`
++        `<rect x="${x}" y="${y}" width="${trackW}" height="${trackH}" rx="${rx}" fill="${inkColor}" opacity="${trackOpacity}" />`
+       )
+ 
+       const fraction = bar?.fraction
+@@ -279,7 +285,7 @@ export function makeTrayBarsSvg(args: {
+           const movingEdgeRadius = Math.max(0, Math.floor(rx * 0.35))
+           if (fillW >= trackW) {
+             parts.push(
+-              `<rect x="${x}" y="${y}" width="${fillW}" height="${trackH}" rx="${rx}" fill="black" opacity="${fillOpacity}" />`
++              `<rect x="${x}" y="${y}" width="${fillW}" height="${trackH}" rx="${rx}" fill="${inkColor}" opacity="${fillOpacity}" />`
+             )
+           } else {
+             const fillPath = makeRoundedBarPath({
+@@ -290,7 +296,7 @@ export function makeTrayBarsSvg(args: {
+               leftRadius: rx,
+               rightRadius: movingEdgeRadius,
+             })
+-            parts.push(`<path d="${fillPath}" fill="black" opacity="${fillOpacity}" />`)
++            parts.push(`<path d="${fillPath}" fill="${inkColor}" opacity="${fillOpacity}" />`)
+           }
+         }
+ 
+@@ -304,7 +310,7 @@ export function makeTrayBarsSvg(args: {
+             leftRadius: Math.max(0, Math.floor(rx * 0.2)),
+             rightRadius: rx,
+           })
+-          parts.push(`<path d="${remainderPath}" fill="black" opacity="${remainderOpacity}" />`)
++          parts.push(`<path d="${remainderPath}" fill="${inkColor}" opacity="${remainderOpacity}" />`)
+         }
+       }
+     }
+@@ -312,7 +318,7 @@ export function makeTrayBarsSvg(args: {
+ 
+   if (text) {
+     parts.push(
+-      `<text x="${layout.textX}" y="${layout.textY}" fill="black" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif" font-size="${layout.fontSize}" font-weight="700" dominant-baseline="middle">${escapeXmlText(text)}</text>`
++      `<text x="${layout.textX}" y="${layout.textY}" fill="${inkColor}" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif" font-size="${layout.fontSize}" font-weight="700" dominant-baseline="middle">${escapeXmlText(text)}</text>`
+     )
+   }
+ 
+-- 
+2.52.0.windows.1
+
+
+From 7d4e2a6b0e1aae78907e55ff1ca4c1c0f48e1445 Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 16:26:25 +0100
+Subject: [PATCH 3/8] docs: add Windows build instructions and polish dark mode
+ UI
+
+- Add prerequisites, build output table, and dev workflow to README
+- Update download line to include Windows, remove Windows from roadmap
+- Bump dark mode border opacity from 0.08 to 0.12 for better visibility
+- Add font smoothing and disable text dragging for native feel
+- Clean up focus reset (remove box-shadow/border-color overrides)
+- Fix test mock to include onFocusChanged for Windows auto-hide
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ README.md        | 18 +++++++++++++++---
+ src/App.test.tsx |  5 ++++-
+ src/index.css    | 15 ++++++++++-----
+ 3 files changed, 29 insertions(+), 9 deletions(-)
+
+diff --git a/README.md b/README.md
+index a0b75dc01f9831277ec2a015ca02155e1018a4ba..e6f5966eb4ffd78c3bbecf9dbd95111fabe52ea4 100644
+--- a/README.md
++++ b/README.md
+@@ -8,7 +8,7 @@ Cursor, Claude, Codex, and more coming. See your usage at a glance from your men
+ 
+ ## Download
+ 
+-[**Download the latest release**](https://github.com/robinebers/openusage/releases/latest) (macOS, Apple Silicon & Intel)
++[**Download the latest release**](https://github.com/robinebers/openusage/releases/latest) (macOS & Windows)
+ 
+ The app auto-updates. Install once and you're set.
+ 
+@@ -46,7 +46,7 @@ I maintain the project as a guide and quality gatekeeper, but this is your app a
+ 
+ Plugins are currently bundled as we build our the API, but soon will be made flexible so you can build and load their own.
+ 
+-**Windows/Linux:** high-priority and on the todo, but I need testers with some time, willing to help out.
++**Linux:** on the roadmap. If you can help test, [open an issue](https://github.com/robinebers/openusage/issues/new).
+ 
+ ### How to Contribute
+ 
+@@ -83,6 +83,13 @@ Inspired by [CodexBar](https://github.com/steipete/CodexBar) by [@steipete](http
+ - React 19, Tailwind 4, Base UI
+ - Vite 7, bun
+ 
++### Prerequisites
++
++- [Rust](https://rustup.rs/) (stable)
++- [bun](https://bun.sh/) (or npm/pnpm)
++- **macOS:** Xcode Command Line Tools (`xcode-select --install`)
++- **Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++" workload, plus [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 10 21H2+ and Windows 11)
++
+ ### Build
+ 
+ ```bash
+@@ -92,7 +99,10 @@ bun install
+ bun tauri build
+ ```
+ 
+-Built app lands in `src-tauri/target/release/bundle/`.
++| Platform | Output |
++|----------|--------|
++| **macOS** | `src-tauri/target/release/bundle/dmg/` and `bundle/macos/` |
++| **Windows** | `src-tauri/target/release/openusage.exe` and `bundle/msi/` and `bundle/nsis/` |
+ 
+ ### Development
+ 
+@@ -101,4 +111,6 @@ bun install
+ bun tauri dev
+ ```
+ 
++This compiles the Rust backend and starts the frontend dev server with hot-reload.
++
+ </details>
+diff --git a/src/App.test.tsx b/src/App.test.tsx
+index 1db4d5ea00224b3ad133020dd666796bb084ca72..d00518975dc9382a5d20974af8c51264efccf0e6 100644
+--- a/src/App.test.tsx
++++ b/src/App.test.tsx
+@@ -105,7 +105,10 @@ vi.mock("@tauri-apps/api/path", () => ({
+ }))
+ 
+ vi.mock("@tauri-apps/api/window", () => ({
+-  getCurrentWindow: () => ({ setSize: state.setSizeMock }),
++  getCurrentWindow: () => ({
++    setSize: state.setSizeMock,
++    onFocusChanged: vi.fn(async () => () => {}),
++  }),
+   PhysicalSize: class {
+     width: number
+     height: number
+diff --git a/src/index.css b/src/index.css
+index ec8200ccb2aa6886b0cc68e7f84571bfba475a98..1c92c0cb24f73f1fe3bc2ef60f29fa7e7ff4d606 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -104,8 +104,8 @@
+   --accent: #252527;
+   --accent-foreground: #ededed;
+   --destructive: #ef4444;
+-  --border: rgba(255, 255, 255, 0.08);
+-  --input: rgba(255, 255, 255, 0.08);
++  --border: rgba(255, 255, 255, 0.12);
++  --input: rgba(255, 255, 255, 0.12);
+   --ring: #555555;
+   --chart-1: oklch(0.488 0.243 264.376);
+   --chart-2: oklch(0.696 0.17 162.48);
+@@ -118,7 +118,7 @@
+   --sidebar-primary-foreground: #0a0a0a;
+   --sidebar-accent: #2a2a2c;
+   --sidebar-accent-foreground: #ededed;
+-  --sidebar-border: rgba(255, 255, 255, 0.08);
++  --sidebar-border: rgba(255, 255, 255, 0.12);
+   --sidebar-ring: #555555;
+ 
+   /* Accent highlight (lime) */
+@@ -148,6 +148,8 @@ body,
+   overflow: hidden;
+   margin: 0;
+   padding: 0;
++  -webkit-font-smoothing: antialiased;
++  -moz-osx-font-smoothing: grayscale;
+ }
+ 
+ /* Hide scrollbar track globally */
+@@ -213,12 +215,15 @@ body,
+   }
+ }
+ 
++/* Prevent right-click context menu and text dragging in the panel */
++html {
++  -webkit-user-drag: none;
++}
++
+ /* Remove focus rings - this is a menu bar app, not keyboard-navigated */
+ *:focus,
+ *:focus-visible {
+   outline: none !important;
+-  box-shadow: none !important;
+   --tw-ring-shadow: 0 0 #0000 !important;
+   --tw-ring-offset-shadow: 0 0 #0000 !important;
+-  border-color: transparent !important;
+ }
+-- 
+2.52.0.windows.1
+
+
+From e9aeaef54c8249324a9e4bd8c04c4e0b2dd0d62f Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 16:51:24 +0100
+Subject: [PATCH 4/8] key related
+
+---
+ .claude/settings.local.json | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+ create mode 100644 .claude/settings.local.json
+
+diff --git a/.claude/settings.local.json b/.claude/settings.local.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..fa3b841c355c6c0ace1a1c088418731329edefa1
+--- /dev/null
++++ b/.claude/settings.local.json
+@@ -0,0 +1,16 @@
++{
++  "permissions": {
++    "allow": [
++      "Bash(git add:*)",
++      "Bash(git commit:*)",
++      "Bash(npx tsc:*)",
++      "Bash(./node_modules/.bin/tsc:*)",
++      "Bash(./node_modules/.bin/vitest:*)",
++      "Bash(cargo check:*)",
++      "Bash(bun run build:*)",
++      "Bash(TAURI_SIGNING_PRIVATE_KEY=\"\" bun tauri build:*)",
++      "Bash(set \"TAURI_SIGNING_PRIVATE_KEY= \")",
++      "Bash(bun tauri build:*)"
++    ]
++  }
++}
+-- 
+2.52.0.windows.1
+
+
+From 90a51d7959aae9d35e5220ea61ca112e5fdb70f5 Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 17:38:05 +0100
+Subject: [PATCH 5/8] fix(windows): use static icon.png tray icon and restore
+ right-click menu
+
+---
+ .../specs/2026-02-07-tray-right-click-menu.md | 20 +++++++
+ docs/specs/2026-02-07-unsigned-build.md       | 19 +++++++
+ .../2026-02-07-windows-static-tray-icon.md    | 20 +++++++
+ .../2026-02-07-windows-tray-icon-app-icon.md  | 23 ++++++++
+ src-tauri/src/tray.rs                         | 53 +++++++++++++++++--
+ src-tauri/tauri.conf.json                     |  4 +-
+ src/App.test.tsx                              |  2 +-
+ src/App.tsx                                   | 28 ++++++++--
+ 8 files changed, 158 insertions(+), 11 deletions(-)
+ create mode 100644 docs/specs/2026-02-07-tray-right-click-menu.md
+ create mode 100644 docs/specs/2026-02-07-unsigned-build.md
+ create mode 100644 docs/specs/2026-02-07-windows-static-tray-icon.md
+ create mode 100644 docs/specs/2026-02-07-windows-tray-icon-app-icon.md
+
+diff --git a/docs/specs/2026-02-07-tray-right-click-menu.md b/docs/specs/2026-02-07-tray-right-click-menu.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..5c27335fc59c2ed269ab827f866db18f87297a3b
+--- /dev/null
++++ b/docs/specs/2026-02-07-tray-right-click-menu.md
+@@ -0,0 +1,20 @@
++# Spec: Tray Right-Click Menu
++
++Date: 2026-02-07
++
++## Goal
++
++Ensure right-click on tray icon shows tray menu.
++
++## Scope
++
++- `src-tauri/src/tray.rs` tray click event handling.
++
++## Behavior
++
++- Left click (button up) toggles panel.
++- Right click does not toggle panel and is left for tray menu behavior.
++
++## Acceptance
++
++- Right-click tray menu is not blocked by panel toggle logic.
+diff --git a/docs/specs/2026-02-07-unsigned-build.md b/docs/specs/2026-02-07-unsigned-build.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..7749575048cac9fe4ee793914473e746353557a9
+--- /dev/null
++++ b/docs/specs/2026-02-07-unsigned-build.md
+@@ -0,0 +1,19 @@
++# Spec: Unsigned Build
++
++Date: 2026-02-07
++
++## Goal
++
++Allow `bun run tauri build` without updater private key signing.
++
++## Scope
++
++- Tauri config updater artifact generation flag.
++
++## Behavior
++
++- Disable updater artifact generation to avoid requiring `TAURI_SIGNING_PRIVATE_KEY`.
++
++## Acceptance
++
++- `bun run tauri build` no longer fails with missing signing private key.
+diff --git a/docs/specs/2026-02-07-windows-static-tray-icon.md b/docs/specs/2026-02-07-windows-static-tray-icon.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..f5499e655e4fe1e944bf0ae9baa92206c7384432
+--- /dev/null
++++ b/docs/specs/2026-02-07-windows-static-tray-icon.md
+@@ -0,0 +1,20 @@
++# Spec: Windows Static Tray Icon
++
++Date: 2026-02-07
++
++## Goal
++
++Keep Windows tray icon fixed to `icons/icon.png`.
++
++## Scope
++
++- Frontend tray icon update pipeline in `src/App.tsx`.
++
++## Behavior
++
++- On Windows, skip dynamic tray icon rendering/updates.
++- Initial tray icon from Rust (`icons/icon.png`) remains visible.
++
++## Acceptance
++
++- Windows tray icon does not switch to generated bar/text/provider icons.
+diff --git a/docs/specs/2026-02-07-windows-tray-icon-app-icon.md b/docs/specs/2026-02-07-windows-tray-icon-app-icon.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..6021abe5c00e8a4b4169e178a397e5254a09379c
+--- /dev/null
++++ b/docs/specs/2026-02-07-windows-tray-icon-app-icon.md
+@@ -0,0 +1,23 @@
++# Spec: Use App Icon for Windows Tray
++
++Date: 2026-02-07
++
++## Goal
++
++Use the app icon for Windows tray icons instead of `icons/tray-icon.png`.
++
++## Scope
++
++- Rust tray bootstrap icon (`src-tauri/src/tray.rs`)
++- Frontend tray fallback icon resolution (`src/App.tsx`)
++- Tauri bundled resources (`src-tauri/tauri.conf.json`)
++
++## Behavior
++
++- Windows tray icon should use `icons/icon.png` only.
++- Non-Windows behavior remains unchanged (`icons/tray-icon.png`).
++
++## Acceptance
++
++- No direct Windows tray dependency on `icons/tray-icon.png` or `icons/icon.ico`.
++- Windows runtime can resolve packaged app icon resources.
+diff --git a/src-tauri/src/tray.rs b/src-tauri/src/tray.rs
+index ab1a059e2f07bcf765e5887983c4ca9d4b5ddf06..fdb99dc2877d4640e2a8e445e5c31cc823a28553 100644
+--- a/src-tauri/src/tray.rs
++++ b/src-tauri/src/tray.rs
+@@ -1,7 +1,7 @@
+ use tauri::image::Image;
+ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+ use tauri::path::BaseDirectory;
+-use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
++use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+ use tauri::{AppHandle, Emitter, Manager};
+ use tauri_plugin_store::StoreExt;
+ 
+@@ -55,11 +55,30 @@ fn show_panel_with_init(app_handle: &AppHandle) {
+     show_panel(app_handle);
+ }
+ 
+-pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
++fn should_toggle_panel(button: MouseButton, button_state: MouseButtonState) -> bool {
++    button == MouseButton::Left && button_state == MouseButtonState::Up
++}
++
++fn load_tray_icon(app_handle: &AppHandle) -> tauri::Result<Image<'static>> {
++    #[cfg(target_os = "windows")]
++    {
++        let icon_png_path = app_handle
++            .path()
++            .resolve("icons/icon.png", BaseDirectory::Resource)?;
++        return Image::from_path(icon_png_path);
++    }
++
++    #[cfg(not(target_os = "windows"))]
++    {
+     let tray_icon_path = app_handle
+         .path()
+         .resolve("icons/tray-icon.png", BaseDirectory::Resource)?;
+-    let icon = Image::from_path(tray_icon_path)?;
++    Image::from_path(tray_icon_path)
++    }
++}
++
++pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
++    let icon = load_tray_icon(app_handle)?;
+ 
+     // Load persisted log level
+     let current_level = get_stored_log_level(app_handle);
+@@ -143,10 +162,13 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+             let app_handle = tray.app_handle();
+ 
+             if let TrayIconEvent::Click {
+-                button_state, rect, ..
++                button,
++                button_state,
++                rect,
++                ..
+             } = event
+             {
+-                if button_state == MouseButtonState::Up {
++                if should_toggle_panel(button, button_state) {
+                     ensure_panel_initialized(app_handle);
+ 
+                     if is_panel_visible(app_handle) {
+@@ -166,3 +188,24 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
+ 
+     Ok(())
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::should_toggle_panel;
++    use tauri::tray::{MouseButton, MouseButtonState};
++
++    #[test]
++    fn toggles_panel_on_left_button_up() {
++        assert!(should_toggle_panel(MouseButton::Left, MouseButtonState::Up));
++    }
++
++    #[test]
++    fn does_not_toggle_panel_on_right_button_up() {
++        assert!(!should_toggle_panel(MouseButton::Right, MouseButtonState::Up));
++    }
++
++    #[test]
++    fn does_not_toggle_panel_on_left_button_down() {
++        assert!(!should_toggle_panel(MouseButton::Left, MouseButtonState::Down));
++    }
++}
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index 23970afba68dcb355da36fbea25e53b4b9b1c89f..f4eb1b6dee41a6da58deb27b3b841e33133dde86 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -41,9 +41,11 @@
+     ],
+     "resources": [
+       "resources/bundled_plugins/**/*",
++      "icons/icon.ico",
++      "icons/icon.png",
+       "icons/tray-icon.png"
+     ],
+-    "createUpdaterArtifacts": true
++    "createUpdaterArtifacts": false
+   },
+   "plugins": {
+     "updater": {
+diff --git a/src/App.test.tsx b/src/App.test.tsx
+index d00518975dc9382a5d20974af8c51264efccf0e6..86195bacc3ec6e41a5a99644af2149017840d6cb 100644
+--- a/src/App.test.tsx
++++ b/src/App.test.tsx
+@@ -853,7 +853,7 @@ describe("App", () => {
+ 
+   it("logs when tray gauge resource cannot be resolved", async () => {
+     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+-    state.resolveResourceMock.mockRejectedValueOnce(new Error("no resource"))
++    state.resolveResourceMock.mockRejectedValue(new Error("no resource"))
+     render(<App />)
+     await waitFor(() => expect(errorSpy).toHaveBeenCalled())
+     errorSpy.mockRestore()
+diff --git a/src/App.tsx b/src/App.tsx
+index f299c594e071a3148f8996dc378aa693dbb3dad3..1f22c9692baee551d58d75ff02dadd91d3fac1b3 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -50,6 +50,10 @@ const MAX_HEIGHT_FRACTION_OF_MONITOR = 0.8;
+ const TRAY_SETTINGS_DEBOUNCE_MS = 2000;
+ const TRAY_PROBE_DEBOUNCE_MS = 500;
+ const IS_MACOS = navigator.userAgent.includes("Macintosh") || navigator.userAgent.includes("Mac OS");
++const IS_WINDOWS = navigator.userAgent.includes("Windows");
++const TRAY_GAUGE_ICON_CANDIDATES = IS_WINDOWS
++  ? ["icons/icon.png"]
++  : ["icons/tray-icon.png"]
+ // macOS: arrow(7) + wrapper pt-1.5(6) + bottom p-6(24) = 37. Windows: no arrow, just padding.
+ const ARROW_OVERHEAD_PX = IS_MACOS ? 37 : 30;
+ 
+@@ -60,6 +64,17 @@ type PluginState = {
+   lastManualRefreshAt: number | null
+ }
+ 
++async function resolveTrayGaugeIconPath(): Promise<string | null> {
++  for (const iconPath of TRAY_GAUGE_ICON_CANDIDATES) {
++    try {
++      return await resolveResource(iconPath)
++    } catch {
++      // Try next candidate.
++    }
++  }
++  return null
++}
++
+ function App() {
+   const [activeView, setActiveView] = useState<ActiveView>("home");
+   const containerRef = useRef<HTMLDivElement>(null);
+@@ -126,6 +141,10 @@ function App() {
+         trayUpdatePendingRef.current = false
+         return
+       }
++      if (IS_WINDOWS) {
++        trayUpdatePendingRef.current = false
++        return
++      }
+ 
+       const style = trayIconStyleRef.current
+       const maxBars = style === "bars" ? 4 : 1
+@@ -221,10 +240,11 @@ function App() {
+         trayRef.current = tray
+         trayInitializedRef.current = true
+         setTrayReady(true)
+-        try {
+-          trayGaugeIconPathRef.current = await resolveResource("icons/tray-icon.png")
+-        } catch (e) {
+-          console.error("Failed to resolve tray gauge icon resource:", e)
++        const trayGaugeIconPath = await resolveTrayGaugeIconPath()
++        if (trayGaugeIconPath) {
++          trayGaugeIconPathRef.current = trayGaugeIconPath
++        } else {
++          console.error("Failed to resolve tray gauge icon resource:", new Error("No tray icon resource found"))
+         }
+       } catch (e) {
+         console.error("Failed to load tray icon handle:", e)
+-- 
+2.52.0.windows.1
+
+
+From d99e4fe1bf042fbe0fd336bbdbc85639c599e9d1 Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 17:44:29 +0100
+Subject: [PATCH 6/8] fix(copilot): support gh auth token fallback on
+ windows/linux
+
+---
+ docs/providers/copilot.md                     |  6 +++-
+ .../2026-02-07-copilot-gh-token-windows.md    | 20 ++++++++++++
+ src-tauri/src/plugin_engine/host_api.rs       | 31 +++++++++++++++++++
+ 3 files changed, 56 insertions(+), 1 deletion(-)
+ create mode 100644 docs/specs/2026-02-07-copilot-gh-token-windows.md
+
+diff --git a/docs/providers/copilot.md b/docs/providers/copilot.md
+index 5cf0354f28a2ed8d0c9dd265719b6b2e990a2ff5..97810d44c3018ee4119096e8942a0a1365e39fb8 100644
+--- a/docs/providers/copilot.md
++++ b/docs/providers/copilot.md
+@@ -7,9 +7,13 @@ Tracks GitHub Copilot usage quotas for both paid and free tier users.
+ The plugin looks for a GitHub token in this order:
+ 
+ 1. **OpenUsage Keychain** (`OpenUsage-copilot`) — Token previously cached by the plugin
+-2. **GitHub CLI Keychain** (`gh:github.com`) — Token from `gh auth login`
++2. **GitHub CLI auth** (`gh:github.com`) — Token from `gh auth login`
+ 3. **State File** (`auth.json`) — Fallback file-based storage
+ 
++Notes:
++- macOS: reads via native keychain entry lookup.
++- Windows/Linux: resolves `gh:github.com` via `gh auth token`.
++
+ ### Setup
+ 
+ Install and authenticate with the GitHub CLI:
+diff --git a/docs/specs/2026-02-07-copilot-gh-token-windows.md b/docs/specs/2026-02-07-copilot-gh-token-windows.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..93ddc888ec7d6b44ac09295b744f674f0b8378b9
+--- /dev/null
++++ b/docs/specs/2026-02-07-copilot-gh-token-windows.md
+@@ -0,0 +1,20 @@
++# Spec: Copilot GH Auth on Windows
++
++Date: 2026-02-07
++
++## Goal
++
++Allow Copilot plugin to use existing `gh auth login` credentials on Windows.
++
++## Scope
++
++- `src-tauri/src/plugin_engine/host_api.rs` keychain bridge.
++
++## Behavior
++
++- On non-macOS, `host.keychain.readGenericPassword("gh:github.com")` falls back to `gh auth token`.
++- Other keychain services remain macOS-only.
++
++## Acceptance
++
++- Copilot plugin can load token source `gh:github.com` on Windows when `gh auth status` is logged in.
+diff --git a/src-tauri/src/plugin_engine/host_api.rs b/src-tauri/src/plugin_engine/host_api.rs
+index 7009fc4d217f463facef89e8b66e12d4e801f5ab..9dc503300518b925cb3d058b93d10180ca6d34c3 100644
+--- a/src-tauri/src/plugin_engine/host_api.rs
++++ b/src-tauri/src/plugin_engine/host_api.rs
+@@ -986,6 +986,37 @@ fn inject_keychain<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<
+             ctx.clone(),
+             move |ctx_inner: Ctx<'_>, service: String| -> rquickjs::Result<String> {
+                 if !cfg!(target_os = "macos") {
++                    if service == "gh:github.com" {
++                        let output = std::process::Command::new("gh")
++                            .args(["auth", "token"])
++                            .output()
++                            .map_err(|e| {
++                                Exception::throw_message(
++                                    &ctx_inner,
++                                    &format!("gh auth token failed: {}", e),
++                                )
++                            })?;
++
++                        if !output.status.success() {
++                            let stderr = String::from_utf8_lossy(&output.stderr);
++                            let first_line = stderr.lines().next().unwrap_or("").trim();
++                            return Err(Exception::throw_message(
++                                &ctx_inner,
++                                &format!("gh auth token failed: {}", first_line),
++                            ));
++                        }
++
++                        let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
++                        if token.is_empty() {
++                            return Err(Exception::throw_message(
++                                &ctx_inner,
++                                "gh auth token returned empty output",
++                            ));
++                        }
++
++                        return Ok(token);
++                    }
++
+                     return Err(Exception::throw_message(
+                         &ctx_inner,
+                         "keychain API is only supported on macOS",
+-- 
+2.52.0.windows.1
+
+
+From ff2c7d826a69cc5a5f746e1a56f6c51cfc49b74b Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 17:56:41 +0100
+Subject: [PATCH 7/8] fix(cursor): detect auth on windows and remove sqlite3
+ cli dependency
+
+---
+ docs/providers/cursor.md                      |   6 +-
+ .../2026-02-07-cursor-auth-paths-by-os.md     |  23 +++
+ .../2026-02-07-embedded-sqlite-host-api.md    |  22 +++
+ plugins/cursor/plugin.js                      |  19 ++-
+ plugins/cursor/plugin.test.js                 |  19 +++
+ src-tauri/Cargo.lock                          |  84 +++++++++--
+ src-tauri/Cargo.toml                          |   1 +
+ src-tauri/src/plugin_engine/host_api.rs       | 136 ++++++++++++------
+ 8 files changed, 258 insertions(+), 52 deletions(-)
+ create mode 100644 docs/specs/2026-02-07-cursor-auth-paths-by-os.md
+ create mode 100644 docs/specs/2026-02-07-embedded-sqlite-host-api.md
+
+diff --git a/docs/providers/cursor.md b/docs/providers/cursor.md
+index e45b7b65facc38d2c5fe69f6f2f7db5e9bdc5448..b6d53b11610dbf7f45883a79e602019838e02b35 100644
+--- a/docs/providers/cursor.md
++++ b/docs/providers/cursor.md
+@@ -107,7 +107,11 @@ Returns limit policy status plus any active credit grants. Response undocumented
+ 
+ ### Token Location
+ 
+-SQLite database at `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
++SQLite database at:
++
++- macOS: `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
++- Windows: `~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb`
++- Linux: `~/.config/Cursor/User/globalStorage/state.vscdb`
+ 
+ ```bash
+ sqlite3 ~/Library/Application\ Support/Cursor/User/globalStorage/state.vscdb \
+diff --git a/docs/specs/2026-02-07-cursor-auth-paths-by-os.md b/docs/specs/2026-02-07-cursor-auth-paths-by-os.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..b321cd2d57e75d37ad9b2f47ba4a5e1f51b683b7
+--- /dev/null
++++ b/docs/specs/2026-02-07-cursor-auth-paths-by-os.md
+@@ -0,0 +1,23 @@
++# Spec: Cursor Auth Path by OS
++
++Date: 2026-02-07
++
++## Goal
++
++Detect Cursor login on Windows/Linux/macOS by reading token DB from the correct OS path.
++
++## Scope
++
++- `plugins/cursor/plugin.js`
++- `docs/providers/cursor.md`
++
++## Behavior
++
++- Resolve `state.vscdb` path from `ctx.app.platform`.
++- Windows: `~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb`
++- Linux: `~/.config/Cursor/User/globalStorage/state.vscdb`
++- macOS/default: `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
++
++## Acceptance
++
++- Windows users with valid Cursor auth no longer see "Not logged in. Sign in via Cursor app." due to wrong DB path.
+diff --git a/docs/specs/2026-02-07-embedded-sqlite-host-api.md b/docs/specs/2026-02-07-embedded-sqlite-host-api.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..917352b21ce7dc1e7e18c07e4bed3b7bd67295f4
+--- /dev/null
++++ b/docs/specs/2026-02-07-embedded-sqlite-host-api.md
+@@ -0,0 +1,22 @@
++# Spec: Embedded SQLite Host API
++
++Date: 2026-02-07
++
++## Goal
++
++Make plugin SQLite APIs work without requiring external `sqlite3` CLI.
++
++## Scope
++
++- `src-tauri/src/plugin_engine/host_api.rs`
++- `src-tauri/Cargo.toml`
++
++## Behavior
++
++- `host.sqlite.query` uses embedded SQLite (`rusqlite`) and returns JSON rows.
++- `host.sqlite.exec` uses embedded SQLite for writes.
++- No runtime dependency on `sqlite3` executable in `PATH`.
++
++## Acceptance
++
++- Cursor/Windsurf plugins can read SQLite state on Windows even when `sqlite3` is not installed.
+diff --git a/plugins/cursor/plugin.js b/plugins/cursor/plugin.js
+index 40fb84d1782b64c491a18820720874037213f515..80958d1499721eda7815cbcc585b474c80b57c98 100644
+--- a/plugins/cursor/plugin.js
++++ b/plugins/cursor/plugin.js
+@@ -1,6 +1,10 @@
+ (function () {
+-  const STATE_DB =
++  const STATE_DB_MACOS =
+     "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
++  const STATE_DB_WINDOWS =
++    "~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb"
++  const STATE_DB_LINUX =
++    "~/.config/Cursor/User/globalStorage/state.vscdb"
+   const BASE_URL = "https://api2.cursor.sh"
+   const USAGE_URL = BASE_URL + "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
+   const PLAN_URL = BASE_URL + "/aiserver.v1.DashboardService/GetPlanInfo"
+@@ -9,11 +13,19 @@
+   const CLIENT_ID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
+   const REFRESH_BUFFER_MS = 5 * 60 * 1000 // refresh 5 minutes before expiration
+ 
++  function getStateDbPath(ctx) {
++    const platform = String(ctx && ctx.app && ctx.app.platform || "").toLowerCase()
++    if (platform === "windows") return STATE_DB_WINDOWS
++    if (platform === "linux") return STATE_DB_LINUX
++    return STATE_DB_MACOS
++  }
++
+   function readStateValue(ctx, key) {
+     try {
++      const stateDb = getStateDbPath(ctx)
+       const sql =
+         "SELECT value FROM ItemTable WHERE key = '" + key + "' LIMIT 1;"
+-      const json = ctx.host.sqlite.query(STATE_DB, sql)
++      const json = ctx.host.sqlite.query(stateDb, sql)
+       const rows = ctx.util.tryParseJson(json)
+       if (!Array.isArray(rows)) {
+         throw new Error("sqlite returned invalid json")
+@@ -29,6 +41,7 @@
+ 
+   function writeStateValue(ctx, key, value) {
+     try {
++      const stateDb = getStateDbPath(ctx)
+       // Escape single quotes in value for SQL
+       const escaped = String(value).replace(/'/g, "''")
+       const sql =
+@@ -37,7 +50,7 @@
+         "', '" +
+         escaped +
+         "');"
+-      ctx.host.sqlite.exec(STATE_DB, sql)
++      ctx.host.sqlite.exec(stateDb, sql)
+       return true
+     } catch (e) {
+       ctx.host.log.warn("sqlite write failed for " + key + ": " + String(e))
+diff --git a/plugins/cursor/plugin.test.js b/plugins/cursor/plugin.test.js
+index 6206c54981690277b6baf77a3f6be577315092b2..ec8cfb7fdc58ac5c05d98a13be104d8049e98789 100644
+--- a/plugins/cursor/plugin.test.js
++++ b/plugins/cursor/plugin.test.js
+@@ -19,6 +19,25 @@ describe("cursor plugin", () => {
+     expect(() => plugin.probe(ctx)).toThrow("Not logged in")
+   })
+ 
++  it("reads token from Windows Cursor globalStorage path", async () => {
++    const ctx = makeCtx()
++    ctx.app.platform = "windows"
++    ctx.host.sqlite.query.mockReturnValue(JSON.stringify([{ value: "token" }]))
++    ctx.host.http.request.mockReturnValue({
++      status: 200,
++      bodyText: JSON.stringify({
++        enabled: true,
++        planUsage: { totalSpend: 1200, limit: 2400 },
++      }),
++    })
++    const plugin = await loadPlugin()
++    const result = plugin.probe(ctx)
++    expect(result.lines.find((line) => line.label === "Plan usage")).toBeTruthy()
++    expect(ctx.host.sqlite.query).toHaveBeenCalled()
++    const firstDbPath = ctx.host.sqlite.query.mock.calls[0][0]
++    expect(String(firstDbPath)).toContain("/AppData/Roaming/Cursor/User/globalStorage/state.vscdb")
++  })
++
+   it("throws on sqlite errors when reading token", async () => {
+     const ctx = makeCtx()
+     ctx.host.sqlite.query.mockImplementation(() => {
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index 72480c83a3036ba9cdc53ad7aff9c8409fe96a8d..e45761c1e122f0155db997a54bca6e2be732783f 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -19,6 +19,18 @@ dependencies = [
+  "version_check",
+ ]
+ 
++[[package]]
++name = "ahash"
++version = "0.8.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
++dependencies = [
++ "cfg-if",
++ "once_cell",
++ "version_check",
++ "zerocopy",
++]
++
+ [[package]]
+ name = "aho-corasick"
+ version = "1.1.4"
+@@ -915,7 +927,7 @@ dependencies = [
+  "libc",
+  "option-ext",
+  "redox_users",
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -1100,7 +1112,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -1124,6 +1136,18 @@ dependencies = [
+  "pin-project-lite",
+ ]
+ 
++[[package]]
++name = "fallible-iterator"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
++
++[[package]]
++name = "fallible-streaming-iterator"
++version = "0.1.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
++
+ [[package]]
+ name = "fastrand"
+ version = "2.3.0"
+@@ -1701,7 +1725,16 @@ version = "0.12.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+ dependencies = [
+- "ahash",
++ "ahash 0.7.8",
++]
++
++[[package]]
++name = "hashbrown"
++version = "0.14.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
++dependencies = [
++ "ahash 0.8.12",
+ ]
+ 
+ [[package]]
+@@ -1715,6 +1748,15 @@ dependencies = [
+  "foldhash",
+ ]
+ 
++[[package]]
++name = "hashlink"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
++dependencies = [
++ "hashbrown 0.14.5",
++]
++
+ [[package]]
+ name = "heck"
+ version = "0.4.1"
+@@ -2284,6 +2326,17 @@ dependencies = [
+  "redox_syscall 0.7.0",
+ ]
+ 
++[[package]]
++name = "libsqlite3-sys"
++version = "0.30.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
++dependencies = [
++ "cc",
++ "pkg-config",
++ "vcpkg",
++]
++
+ [[package]]
+ name = "linux-raw-sys"
+ version = "0.11.0"
+@@ -2903,6 +2956,7 @@ dependencies = [
+  "regex-lite",
+  "reqwest 0.13.2",
+  "rquickjs",
++ "rusqlite",
+  "serde",
+  "serde_json",
+  "tauri",
+@@ -3452,7 +3506,7 @@ dependencies = [
+  "once_cell",
+  "socket2",
+  "tracing",
+- "windows-sys 0.59.0",
++ "windows-sys 0.60.2",
+ ]
+ 
+ [[package]]
+@@ -3869,6 +3923,20 @@ dependencies = [
+  "cc",
+ ]
+ 
++[[package]]
++name = "rusqlite"
++version = "0.32.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
++dependencies = [
++ "bitflags 2.10.0",
++ "fallible-iterator",
++ "fallible-streaming-iterator",
++ "hashlink",
++ "libsqlite3-sys",
++ "smallvec",
++]
++
+ [[package]]
+ name = "rust_decimal"
+ version = "1.40.0"
+@@ -3910,7 +3978,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -3968,7 +4036,7 @@ dependencies = [
+  "security-framework 3.5.1",
+  "security-framework-sys",
+  "webpki-root-certs",
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -5027,7 +5095,7 @@ dependencies = [
+  "getrandom 0.3.4",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -5822,7 +5890,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index ae91ca6dbc38c3b396e94f87d5d8c7d177ec6a3f..c07847f4a35e4f55dcc37bb9388d9bc89eb53ebb 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -36,6 +36,7 @@ tauri-plugin-updater = "2"
+ tauri-plugin-process = "2"
+ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+ regex-lite = "0.1.9"
++rusqlite = { version = "0.32.1", features = ["bundled"] }
+ 
+ [target.'cfg(target_os = "macos")'.dependencies]
+ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+diff --git a/src-tauri/src/plugin_engine/host_api.rs b/src-tauri/src/plugin_engine/host_api.rs
+index 9dc503300518b925cb3d058b93d10180ca6d34c3..64ece3e703bb63f2c9917070d49fe848142a5c03 100644
+--- a/src-tauri/src/plugin_engine/host_api.rs
++++ b/src-tauri/src/plugin_engine/host_api.rs
+@@ -1,4 +1,7 @@
++use base64::Engine;
+ use rquickjs::{Ctx, Exception, Function, Object};
++use rusqlite::{Connection, OpenFlags};
++use rusqlite::types::ValueRef;
+ use std::path::PathBuf;
+ 
+ const WHITELISTED_ENV_VARS: [&str; 1] = ["CODEX_HOME"];
+@@ -1146,34 +1149,68 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
+                     ));
+                 }
+                 let expanded = expand_path(&db_path);
+-                // Use immutable=1 to bypass WAL/SHM file access issues
+-                // (WAL databases can fail with -readonly when shm is locked after macOS sleep)
+-                // Percent-encode special chars for valid URI (% must be first!)
+-                let encoded = expanded
+-                    .replace('%', "%25")
+-                    .replace(' ', "%20")
+-                    .replace('#', "%23")
+-                    .replace('?', "%3F");
+-                let uri_path = format!("file:{}?immutable=1", encoded);
+-                let output = std::process::Command::new("sqlite3")
+-                    .args(["-readonly", "-json", &uri_path, &sql])
+-                    .output()
+-                    .map_err(|e| {
+-                        Exception::throw_message(
+-                            &ctx_inner,
+-                            &format!("sqlite3 exec failed: {}", e),
+-                        )
+-                    })?;
++                let uri_path = sqlite_readonly_uri(&expanded);
++                let conn = Connection::open_with_flags(
++                    &uri_path,
++                    OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
++                )
++                .map_err(|e| {
++                    Exception::throw_message(
++                        &ctx_inner,
++                        &format!("sqlite open failed: {}", e),
++                    )
++                })?;
+ 
+-                if !output.status.success() {
+-                    let stderr = String::from_utf8_lossy(&output.stderr);
+-                    return Err(Exception::throw_message(
++                let mut stmt = conn.prepare(&sql).map_err(|e| {
++                    Exception::throw_message(
+                         &ctx_inner,
+-                        &format!("sqlite3 error: {}", stderr.trim()),
+-                    ));
++                        &format!("sqlite prepare failed: {}", e),
++                    )
++                })?;
++                let column_count = stmt.column_count();
++                let column_names: Vec<String> = stmt
++                    .column_names()
++                    .iter()
++                    .map(|name| (*name).to_string())
++                    .collect();
++
++                let mut rows = stmt.query([]).map_err(|e| {
++                    Exception::throw_message(
++                        &ctx_inner,
++                        &format!("sqlite query failed: {}", e),
++                    )
++                })?;
++
++                let mut out = Vec::<serde_json::Value>::new();
++                while let Some(row) = rows.next().map_err(|e| {
++                    Exception::throw_message(
++                        &ctx_inner,
++                        &format!("sqlite rows failed: {}", e),
++                    )
++                })? {
++                    let mut object = serde_json::Map::with_capacity(column_count);
++                    for index in 0..column_count {
++                        let key = column_names
++                            .get(index)
++                            .cloned()
++                            .unwrap_or_else(|| format!("column{}", index));
++                        let value_ref = row.get_ref(index).map_err(|e| {
++                            Exception::throw_message(
++                                &ctx_inner,
++                                &format!("sqlite value failed: {}", e),
++                            )
++                        })?;
++                        object.insert(key, sqlite_value_ref_to_json(value_ref));
++                    }
++                    out.push(serde_json::Value::Object(object));
+                 }
+ 
+-                Ok(String::from_utf8_lossy(&output.stdout).to_string())
++                serde_json::to_string(&out).map_err(|e| {
++                    Exception::throw_message(
++                        &ctx_inner,
++                        &format!("sqlite json encode failed: {}", e),
++                    )
++                })
+             },
+         )?,
+     )?;
+@@ -1190,23 +1227,22 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
+                     ));
+                 }
+                 let expanded = expand_path(&db_path);
+-                let output = std::process::Command::new("sqlite3")
+-                    .args([&expanded, &sql])
+-                    .output()
+-                    .map_err(|e| {
+-                        Exception::throw_message(
+-                            &ctx_inner,
+-                            &format!("sqlite3 exec failed: {}", e),
+-                        )
+-                    })?;
+-
+-                if !output.status.success() {
+-                    let stderr = String::from_utf8_lossy(&output.stderr);
+-                    return Err(Exception::throw_message(
++                let conn = Connection::open_with_flags(
++                    &expanded,
++                    OpenFlags::SQLITE_OPEN_READ_WRITE,
++                )
++                .map_err(|e| {
++                    Exception::throw_message(
+                         &ctx_inner,
+-                        &format!("sqlite3 error: {}", stderr.trim()),
+-                    ));
+-                }
++                        &format!("sqlite open failed: {}", e),
++                    )
++                })?;
++                conn.execute_batch(&sql).map_err(|e| {
++                    Exception::throw_message(
++                        &ctx_inner,
++                        &format!("sqlite exec failed: {}", e),
++                    )
++                })?;
+ 
+                 Ok(())
+             },
+@@ -1217,6 +1253,26 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
+     Ok(())
+ }
+ 
++fn sqlite_readonly_uri(expanded_path: &str) -> String {
++    // Use immutable=1 to bypass WAL/SHM file access issues with read-only access.
++    let encoded = expanded_path
++        .replace('%', "%25")
++        .replace(' ', "%20")
++        .replace('#', "%23")
++        .replace('?', "%3F");
++    format!("file:{}?immutable=1", encoded)
++}
++
++fn sqlite_value_ref_to_json(value: ValueRef<'_>) -> serde_json::Value {
++    match value {
++        ValueRef::Null => serde_json::Value::Null,
++        ValueRef::Integer(v) => serde_json::json!(v),
++        ValueRef::Real(v) => serde_json::json!(v),
++        ValueRef::Text(bytes) => serde_json::Value::String(String::from_utf8_lossy(bytes).to_string()),
++        ValueRef::Blob(bytes) => serde_json::json!(base64::engine::general_purpose::STANDARD.encode(bytes)),
++    }
++}
++
+ fn iso_now() -> String {
+     time::OffsetDateTime::now_utc()
+         .format(&time::format_description::well_known::Rfc3339)
+-- 
+2.52.0.windows.1
+
+
+From 0b70a8ad8000e9cc5aebc7ce1b58347f08912f51 Mon Sep 17 00:00:00 2001
+From: souhaiebtar <tarhounisouhaieb@gmail.com>
+Date: Sat, 7 Feb 2026 18:04:33 +0100
+Subject: [PATCH 8/8] fix(ui): hide updater error text in footer
+
+---
+ .../2026-02-07-hide-update-failed-label.md    | 20 +++++++++++++++++++
+ src/components/panel-footer.test.tsx          |  5 +++--
+ src/components/panel-footer.tsx               |  6 +-----
+ 3 files changed, 24 insertions(+), 7 deletions(-)
+ create mode 100644 docs/specs/2026-02-07-hide-update-failed-label.md
+
+diff --git a/docs/specs/2026-02-07-hide-update-failed-label.md b/docs/specs/2026-02-07-hide-update-failed-label.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..f0af6da1a6cd21ad31307c5d526edcb642016a42
+--- /dev/null
++++ b/docs/specs/2026-02-07-hide-update-failed-label.md
+@@ -0,0 +1,20 @@
++# Spec: Hide Update Failed Label
++
++Date: 2026-02-07
++
++## Goal
++
++Remove red `Update failed` text from footer.
++
++## Scope
++
++- `src/components/panel-footer.tsx`
++- `src/components/panel-footer.test.tsx`
++
++## Behavior
++
++- Update error state renders no left-side status text.
++
++## Acceptance
++
++- Footer never displays `Update failed` text.
+diff --git a/src/components/panel-footer.test.tsx b/src/components/panel-footer.test.tsx
+index f0f331fb68731c5904f39f6ed1f88cd955159716..68dc9136365c81c1488086a396073884ee1eeb87 100644
+--- a/src/components/panel-footer.test.tsx
++++ b/src/components/panel-footer.test.tsx
+@@ -98,7 +98,7 @@ describe("PanelFooter", () => {
+     expect(onInstall).toHaveBeenCalledTimes(1)
+   })
+ 
+-  it("shows error state", () => {
++  it("hides left status text in error state", () => {
+     const { container } = render(
+       <PanelFooter
+         version="0.0.0"
+@@ -108,7 +108,8 @@ describe("PanelFooter", () => {
+         {...aboutProps}
+       />
+     )
+-    expect(container.textContent).toContain("Update failed")
++    expect(container.textContent).not.toContain("OpenUsage 0.0.0")
++    expect(container.textContent).not.toContain("Update failed")
+   })
+ 
+   it("shows installing state", () => {
+diff --git a/src/components/panel-footer.tsx b/src/components/panel-footer.tsx
+index 9f7facc9f553b95b3c76713a05cb1419e18b4561..e0adc3b5f008d208ed2fe385c2fd2c28434ce2fd 100644
+--- a/src/components/panel-footer.tsx
++++ b/src/components/panel-footer.tsx
+@@ -50,11 +50,7 @@ function VersionDisplay({
+         <span className="text-xs text-muted-foreground">Installing...</span>
+       );
+     case "error":
+-      return (
+-        <span className="text-xs text-destructive" title={updateStatus.message}>
+-          Update failed
+-        </span>
+-      );
++      return null;
+     default:
+       return (
+         <button
+-- 
+2.52.0.windows.1
+
