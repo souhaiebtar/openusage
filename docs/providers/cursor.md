@@ -107,7 +107,11 @@ Returns limit policy status plus any active credit grants. Response undocumented
 
 ### Token Location
 
-SQLite database at `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
+SQLite database at:
+
+- macOS: `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
+- Windows: `~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb`
+- Linux: `~/.config/Cursor/User/globalStorage/state.vscdb`
 
 ```bash
 sqlite3 ~/Library/Application\ Support/Cursor/User/globalStorage/state.vscdb \

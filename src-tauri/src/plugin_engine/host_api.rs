@@ -1,4 +1,7 @@
+use base64::Engine;
 use rquickjs::{Ctx, Exception, Function, Object};
+use rusqlite::{Connection, OpenFlags};
+use rusqlite::types::ValueRef;
 use std::path::PathBuf;
 
 const WHITELISTED_ENV_VARS: [&str; 1] = ["CODEX_HOME"];
@@ -1146,34 +1149,68 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
                     ));
                 }
                 let expanded = expand_path(&db_path);
-                // Use immutable=1 to bypass WAL/SHM file access issues
-                // (WAL databases can fail with -readonly when shm is locked after macOS sleep)
-                // Percent-encode special chars for valid URI (% must be first!)
-                let encoded = expanded
-                    .replace('%', "%25")
-                    .replace(' ', "%20")
-                    .replace('#', "%23")
-                    .replace('?', "%3F");
-                let uri_path = format!("file:{}?immutable=1", encoded);
-                let output = std::process::Command::new("sqlite3")
-                    .args(["-readonly", "-json", &uri_path, &sql])
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(
-                            &ctx_inner,
-                            &format!("sqlite3 exec failed: {}", e),
-                        )
-                    })?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(Exception::throw_message(
+                let uri_path = sqlite_readonly_uri(&expanded);
+                let conn = Connection::open_with_flags(
+                    &uri_path,
+                    OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+                )
+                .map_err(|e| {
+                    Exception::throw_message(
                         &ctx_inner,
-                        &format!("sqlite3 error: {}", stderr.trim()),
-                    ));
+                        &format!("sqlite open failed: {}", e),
+                    )
+                })?;
+
+                let mut stmt = conn.prepare(&sql).map_err(|e| {
+                    Exception::throw_message(
+                        &ctx_inner,
+                        &format!("sqlite prepare failed: {}", e),
+                    )
+                })?;
+                let column_count = stmt.column_count();
+                let column_names: Vec<String> = stmt
+                    .column_names()
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect();
+
+                let mut rows = stmt.query([]).map_err(|e| {
+                    Exception::throw_message(
+                        &ctx_inner,
+                        &format!("sqlite query failed: {}", e),
+                    )
+                })?;
+
+                let mut out = Vec::<serde_json::Value>::new();
+                while let Some(row) = rows.next().map_err(|e| {
+                    Exception::throw_message(
+                        &ctx_inner,
+                        &format!("sqlite rows failed: {}", e),
+                    )
+                })? {
+                    let mut object = serde_json::Map::with_capacity(column_count);
+                    for index in 0..column_count {
+                        let key = column_names
+                            .get(index)
+                            .cloned()
+                            .unwrap_or_else(|| format!("column{}", index));
+                        let value_ref = row.get_ref(index).map_err(|e| {
+                            Exception::throw_message(
+                                &ctx_inner,
+                                &format!("sqlite value failed: {}", e),
+                            )
+                        })?;
+                        object.insert(key, sqlite_value_ref_to_json(value_ref));
+                    }
+                    out.push(serde_json::Value::Object(object));
                 }
 
-                Ok(String::from_utf8_lossy(&output.stdout).to_string())
+                serde_json::to_string(&out).map_err(|e| {
+                    Exception::throw_message(
+                        &ctx_inner,
+                        &format!("sqlite json encode failed: {}", e),
+                    )
+                })
             },
         )?,
     )?;
@@ -1190,23 +1227,22 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
                     ));
                 }
                 let expanded = expand_path(&db_path);
-                let output = std::process::Command::new("sqlite3")
-                    .args([&expanded, &sql])
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(
-                            &ctx_inner,
-                            &format!("sqlite3 exec failed: {}", e),
-                        )
-                    })?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(Exception::throw_message(
+                let conn = Connection::open_with_flags(
+                    &expanded,
+                    OpenFlags::SQLITE_OPEN_READ_WRITE,
+                )
+                .map_err(|e| {
+                    Exception::throw_message(
                         &ctx_inner,
-                        &format!("sqlite3 error: {}", stderr.trim()),
-                    ));
-                }
+                        &format!("sqlite open failed: {}", e),
+                    )
+                })?;
+                conn.execute_batch(&sql).map_err(|e| {
+                    Exception::throw_message(
+                        &ctx_inner,
+                        &format!("sqlite exec failed: {}", e),
+                    )
+                })?;
 
                 Ok(())
             },
@@ -1215,6 +1251,26 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
 
     host.set("sqlite", sqlite_obj)?;
     Ok(())
+}
+
+fn sqlite_readonly_uri(expanded_path: &str) -> String {
+    // Use immutable=1 to bypass WAL/SHM file access issues with read-only access.
+    let encoded = expanded_path
+        .replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('#', "%23")
+        .replace('?', "%3F");
+    format!("file:{}?immutable=1", encoded)
+}
+
+fn sqlite_value_ref_to_json(value: ValueRef<'_>) -> serde_json::Value {
+    match value {
+        ValueRef::Null => serde_json::Value::Null,
+        ValueRef::Integer(v) => serde_json::json!(v),
+        ValueRef::Real(v) => serde_json::json!(v),
+        ValueRef::Text(bytes) => serde_json::Value::String(String::from_utf8_lossy(bytes).to_string()),
+        ValueRef::Blob(bytes) => serde_json::json!(base64::engine::general_purpose::STANDARD.encode(bytes)),
+    }
 }
 
 fn iso_now() -> String {

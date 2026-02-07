@@ -19,6 +19,25 @@ describe("cursor plugin", () => {
     expect(() => plugin.probe(ctx)).toThrow("Not logged in")
   })
 
+  it("reads token from Windows Cursor globalStorage path", async () => {
+    const ctx = makeCtx()
+    ctx.app.platform = "windows"
+    ctx.host.sqlite.query.mockReturnValue(JSON.stringify([{ value: "token" }]))
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      bodyText: JSON.stringify({
+        enabled: true,
+        planUsage: { totalSpend: 1200, limit: 2400 },
+      }),
+    })
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.lines.find((line) => line.label === "Plan usage")).toBeTruthy()
+    expect(ctx.host.sqlite.query).toHaveBeenCalled()
+    const firstDbPath = ctx.host.sqlite.query.mock.calls[0][0]
+    expect(String(firstDbPath)).toContain("/AppData/Roaming/Cursor/User/globalStorage/state.vscdb")
+  })
+
   it("throws on sqlite errors when reading token", async () => {
     const ctx = makeCtx()
     ctx.host.sqlite.query.mockImplementation(() => {

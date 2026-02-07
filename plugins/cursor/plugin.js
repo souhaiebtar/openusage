@@ -1,6 +1,10 @@
 (function () {
-  const STATE_DB =
+  const STATE_DB_MACOS =
     "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+  const STATE_DB_WINDOWS =
+    "~/AppData/Roaming/Cursor/User/globalStorage/state.vscdb"
+  const STATE_DB_LINUX =
+    "~/.config/Cursor/User/globalStorage/state.vscdb"
   const BASE_URL = "https://api2.cursor.sh"
   const USAGE_URL = BASE_URL + "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
   const PLAN_URL = BASE_URL + "/aiserver.v1.DashboardService/GetPlanInfo"
@@ -9,11 +13,19 @@
   const CLIENT_ID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
   const REFRESH_BUFFER_MS = 5 * 60 * 1000 // refresh 5 minutes before expiration
 
+  function getStateDbPath(ctx) {
+    const platform = String(ctx && ctx.app && ctx.app.platform || "").toLowerCase()
+    if (platform === "windows") return STATE_DB_WINDOWS
+    if (platform === "linux") return STATE_DB_LINUX
+    return STATE_DB_MACOS
+  }
+
   function readStateValue(ctx, key) {
     try {
+      const stateDb = getStateDbPath(ctx)
       const sql =
         "SELECT value FROM ItemTable WHERE key = '" + key + "' LIMIT 1;"
-      const json = ctx.host.sqlite.query(STATE_DB, sql)
+      const json = ctx.host.sqlite.query(stateDb, sql)
       const rows = ctx.util.tryParseJson(json)
       if (!Array.isArray(rows)) {
         throw new Error("sqlite returned invalid json")
@@ -29,6 +41,7 @@
 
   function writeStateValue(ctx, key, value) {
     try {
+      const stateDb = getStateDbPath(ctx)
       // Escape single quotes in value for SQL
       const escaped = String(value).replace(/'/g, "''")
       const sql =
@@ -37,7 +50,7 @@
         "', '" +
         escaped +
         "');"
-      ctx.host.sqlite.exec(STATE_DB, sql)
+      ctx.host.sqlite.exec(stateDb, sql)
       return true
     } catch (e) {
       ctx.host.log.warn("sqlite write failed for " + key + ": " + String(e))
