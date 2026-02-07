@@ -47,9 +47,11 @@ import {
 const PANEL_WIDTH = 400;
 const MAX_HEIGHT_FALLBACK_PX = 600;
 const MAX_HEIGHT_FRACTION_OF_MONITOR = 0.8;
-const ARROW_OVERHEAD_PX = 37; // .tray-arrow (7px) + wrapper pt-1.5 (6px) + bottom p-6 (24px)
 const TRAY_SETTINGS_DEBOUNCE_MS = 2000;
 const TRAY_PROBE_DEBOUNCE_MS = 500;
+const IS_MACOS = navigator.userAgent.includes("Macintosh") || navigator.userAgent.includes("Mac OS");
+// macOS: arrow(7) + wrapper pt-1.5(6) + bottom p-6(24) = 37. Windows: no arrow, just padding.
+const ARROW_OVERHEAD_PX = IS_MACOS ? 37 : 30;
 
 type PluginState = {
   data: PluginOutput | null
@@ -141,7 +143,7 @@ function App() {
         if (gaugePath) {
           Promise.all([
             tray.setIcon(gaugePath),
-            tray.setIconAsTemplate(true),
+            tray.setIconAsTemplate(IS_MACOS),
           ])
             .catch((e) => {
               console.error("Failed to restore tray gauge icon:", e)
@@ -172,7 +174,7 @@ function App() {
         if (gaugePath) {
           Promise.all([
             tray.setIcon(gaugePath),
-            tray.setIconAsTemplate(true),
+            tray.setIconAsTemplate(IS_MACOS),
           ])
             .catch((e) => {
               console.error("Failed to restore tray gauge icon:", e)
@@ -196,7 +198,7 @@ function App() {
       renderTrayBarsIcon({ bars, sizePx, style, percentText, providerIconUrl })
         .then(async (img) => {
           await tray.setIcon(img)
-          await tray.setIconAsTemplate(true)
+          await tray.setIconAsTemplate(IS_MACOS)
         })
         .catch((e) => {
           console.error("Failed to update tray icon:", e)
@@ -304,6 +306,21 @@ function App() {
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [showAbout])
+
+  // On Windows, hide panel when it loses focus (simulates NSPanel behavior on macOS)
+  useEffect(() => {
+    if (IS_MACOS || !isTauri()) return
+    let cancelled = false
+    const unlistener = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!cancelled && !focused) {
+        invoke("hide_panel").catch(console.error)
+      }
+    })
+    return () => {
+      cancelled = true
+      unlistener.then((fn) => fn())
+    }
+  }, [])
 
   // Listen for tray menu events
   useEffect(() => {
@@ -827,8 +844,8 @@ function App() {
   }
 
   return (
-    <div ref={containerRef} className="flex flex-col items-center p-6 pt-1.5 bg-transparent">
-      <div className="tray-arrow" />
+    <div ref={containerRef} className={`flex flex-col items-center bg-transparent ${IS_MACOS ? "p-6 pt-1.5" : "p-4 pb-2"}`}>
+      {IS_MACOS && <div className="tray-arrow" />}
       <div
         className="relative bg-card rounded-xl overflow-hidden select-none w-full border shadow-lg flex flex-col"
         style={maxPanelHeightPx ? { maxHeight: `${maxPanelHeightPx - ARROW_OVERHEAD_PX}px` } : undefined}
