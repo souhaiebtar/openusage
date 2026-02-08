@@ -135,8 +135,8 @@ This repo publishes Windows release artifacts via `.github/workflows/publish.yml
 2. Create and push a tag:
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.5.2
+git push origin v0.5.2
 ```
 
 3. GitHub Actions builds and publishes Windows installers to the matching GitHub Release.
