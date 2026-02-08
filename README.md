@@ -2,7 +2,7 @@
 
 **Track all your AI coding subscriptions in one place.**
 
-Cursor, Claude, Codex, and more coming. See your usage at a glance from your menu bar. No digging through dashboards.
+Amp, Cursor, Claude, Codex, and more coming. See your usage at a glance from your menu bar. No digging through dashboards.
 
 ![OpenUsage Screenshot](screenshot.png)
 
@@ -23,11 +23,13 @@ OpenUsage lives in your menu bar and shows you how much of your AI coding subscr
 
 ## Supported Providers
 
+- [**Amp**](docs/providers/amp.md) / free tier, bonus, credits
 - [**Antigravity**](docs/providers/antigravity.md) / all models
 - [**Claude**](docs/providers/claude.md) / session, weekly, extra usage
 - [**Codex**](docs/providers/codex.md) / session, weekly, reviews, credits
 - [**Copilot**](docs/providers/copilot.md) / premium, chat, completions
 - [**Cursor**](docs/providers/cursor.md) / credits, plan usage, on-demand
+- [**Kimi Code**](docs/providers/kimi.md) / session, weekly
 - [**Windsurf**](docs/providers/windsurf.md) / prompt credits, flex credits
 
 ### Maybe Soon
@@ -36,6 +38,7 @@ OpenUsage lives in your menu bar and shows you how much of your AI coding subscr
 - [Gemini](https://github.com/robinebers/openusage/issues/13)
 - [Vercel AI Gateway](https://github.com/robinebers/openusage/issues/18)
 
+Community contributions welcome.
 Want a provider that's not listed? [Open an issue.](https://github.com/robinebers/openusage/issues/new)
 
 ## Open Source, Community Driven
@@ -55,6 +58,13 @@ Plugins are currently bundled as we build our the API, but soon will be made fle
 - **Request a feature.** [Open an issue](https://github.com/robinebers/openusage/issues/new) and make your case.
 
 Keep it simple. No feature creep, no AI-generated commit messages, test your changes.
+
+## Built Entirely with AI
+
+Not a single line of code in this project was read or written by hand. 100% AI-generated, AI-reviewed, AI-shipped — using [Cursor](https://cursor.com), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), and [Codex CLI](https://github.com/openai/codex).
+
+OpenUsage is a real-world example of what I teach in the [AI Builder's Blueprint](https://itsbyrob.in/EBDqgJ6
+) — a proven process for building and shipping software with AI, no coding background required.
 
 ## Sponsors
 
