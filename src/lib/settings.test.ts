@@ -6,6 +6,7 @@ import {
   DEFAULT_TRAY_ICON_STYLE,
   DEFAULT_TRAY_SHOW_PERCENTAGE,
   DEFAULT_THEME_MODE,
+  DEFAULT_UI_DENSITY,
   arePluginSettingsEqual,
   getEnabledPluginIds,
   loadAutoUpdateInterval,
@@ -14,6 +15,7 @@ import {
   loadTrayIconStyle,
   loadTrayShowPercentage,
   loadThemeMode,
+  loadUiDensity,
   normalizePluginSettings,
   saveAutoUpdateInterval,
   saveDisplayMode,
@@ -21,6 +23,7 @@ import {
   saveTrayIconStyle,
   saveTrayShowPercentage,
   saveThemeMode,
+  saveUiDensity,
 } from "@/lib/settings"
 import type { PluginMeta } from "@/lib/plugin-types"
 
@@ -146,6 +149,25 @@ describe("settings", () => {
   it("falls back to default for invalid display mode", async () => {
     storeState.set("displayMode", "invalid")
     await expect(loadDisplayMode()).resolves.toBe(DEFAULT_DISPLAY_MODE)
+  })
+
+  it("loads default interface size when missing", async () => {
+    await expect(loadUiDensity()).resolves.toBe(DEFAULT_UI_DENSITY)
+  })
+
+  it("loads stored interface size", async () => {
+    storeState.set("uiDensity", "compact")
+    await expect(loadUiDensity()).resolves.toBe("compact")
+  })
+
+  it("saves interface size", async () => {
+    await saveUiDensity("compact")
+    await expect(loadUiDensity()).resolves.toBe("compact")
+  })
+
+  it("falls back to default for invalid interface size", async () => {
+    storeState.set("uiDensity", "tiny")
+    await expect(loadUiDensity()).resolves.toBe(DEFAULT_UI_DENSITY)
   })
 
   it("loads default tray icon style when missing", async () => {

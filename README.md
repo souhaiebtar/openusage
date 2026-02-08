@@ -124,6 +124,27 @@ bun tauri dev
 
 This compiles the Rust backend and starts the frontend dev server with hot-reload.
 
+### Clean build artifacts (free disk space)
+
+If your repo grows very large (for example ~13GB), remove generated artifacts:
+
+```powershell
+# Windows (PowerShell)
+Remove-Item -Recurse -Force dist,node_modules,src-tauri/target,src-tauri/resources/bundled_plugins
+```
+
+```bash
+# macOS/Linux
+rm -rf dist node_modules src-tauri/target src-tauri/resources/bundled_plugins
+```
+
+Recreate dependencies/build outputs when needed:
+
+```bash
+bun install
+bun run bundle:plugins
+```
+
 ### Release (Windows only, GitHub Actions)
 
 This repo publishes Windows release artifacts via `.github/workflows/publish.yml`.

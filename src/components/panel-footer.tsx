@@ -91,7 +91,7 @@ export function PanelFooter({
 
   return (
     <>
-      <div className="flex justify-between items-center h-8 pt-1.5 border-t">
+      <div className="panel-footer flex justify-between items-center h-8 pt-1.5 border-t">
         <VersionDisplay
           version={version}
           updateStatus={updateStatus}

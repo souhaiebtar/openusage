@@ -21,11 +21,13 @@ import { Button } from "@/components/ui/button";
 import {
   AUTO_UPDATE_OPTIONS,
   DISPLAY_MODE_OPTIONS,
+  UI_DENSITY_OPTIONS,
   TRAY_ICON_STYLE_OPTIONS,
   THEME_OPTIONS,
   isTrayPercentageMandatory,
   type AutoUpdateIntervalMinutes,
   type DisplayMode,
+  type UiDensity,
   type ThemeMode,
   type TrayIconStyle,
 } from "@/lib/settings";
@@ -265,6 +267,8 @@ interface SettingsPageProps {
   onThemeModeChange: (value: ThemeMode) => void;
   displayMode: DisplayMode;
   onDisplayModeChange: (value: DisplayMode) => void;
+  uiDensity: UiDensity;
+  onUiDensityChange: (value: UiDensity) => void;
   trayIconStyle: TrayIconStyle;
   onTrayIconStyleChange: (value: TrayIconStyle) => void;
   trayShowPercentage: boolean;
@@ -282,6 +286,8 @@ export function SettingsPage({
   onThemeModeChange,
   displayMode,
   onDisplayModeChange,
+  uiDensity,
+  onUiDensityChange,
   trayIconStyle,
   onTrayIconStyleChange,
   trayShowPercentage,
@@ -313,7 +319,7 @@ export function SettingsPage({
   };
 
   return (
-    <div className="py-3 space-y-4">
+    <div className="settings-page py-3 space-y-4">
       <section>
         <h3 className="text-lg font-semibold mb-0">Auto Refresh</h3>
         <p className="text-sm text-muted-foreground mb-2">
@@ -438,6 +444,33 @@ export function SettingsPage({
                   size="sm"
                   className="flex-1"
                   onClick={() => onThemeModeChange(option.value)}
+                >
+                  {option.label}
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+      <section>
+        <h3 className="text-lg font-semibold mb-0">Interface Size</h3>
+        <p className="text-sm text-muted-foreground mb-2">
+          Show more without scrolling
+        </p>
+        <div className="bg-muted/50 rounded-lg p-1">
+          <div className="flex gap-1" role="radiogroup" aria-label="Interface size">
+            {UI_DENSITY_OPTIONS.map((option) => {
+              const isActive = option.value === uiDensity;
+              return (
+                <Button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={isActive}
+                  variant={isActive ? "default" : "outline"}
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => onUiDensityChange(option.value)}
                 >
                   {option.label}
                 </Button>

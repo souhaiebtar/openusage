@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   saveThemeModeMock: vi.fn(),
   loadDisplayModeMock: vi.fn(),
   saveDisplayModeMock: vi.fn(),
+  loadUiDensityMock: vi.fn(),
+  saveUiDensityMock: vi.fn(),
   loadTrayIconStyleMock: vi.fn(),
   saveTrayIconStyleMock: vi.fn(),
   loadTrayShowPercentageMock: vi.fn(),
@@ -156,6 +158,8 @@ vi.mock("@/lib/settings", async () => {
     saveThemeMode: state.saveThemeModeMock,
     loadDisplayMode: state.loadDisplayModeMock,
     saveDisplayMode: state.saveDisplayModeMock,
+    loadUiDensity: state.loadUiDensityMock,
+    saveUiDensity: state.saveUiDensityMock,
     loadTrayIconStyle: state.loadTrayIconStyleMock,
     saveTrayIconStyle: state.saveTrayIconStyleMock,
     loadTrayShowPercentage: state.loadTrayShowPercentageMock,
@@ -182,6 +186,8 @@ describe("App", () => {
     state.saveThemeModeMock.mockReset()
     state.loadDisplayModeMock.mockReset()
     state.saveDisplayModeMock.mockReset()
+    state.loadUiDensityMock.mockReset()
+    state.saveUiDensityMock.mockReset()
     state.loadTrayIconStyleMock.mockReset()
     state.saveTrayIconStyleMock.mockReset()
     state.loadTrayShowPercentageMock.mockReset()
@@ -202,6 +208,8 @@ describe("App", () => {
     state.saveThemeModeMock.mockResolvedValue(undefined)
     state.loadDisplayModeMock.mockResolvedValue("left")
     state.saveDisplayModeMock.mockResolvedValue(undefined)
+    state.loadUiDensityMock.mockResolvedValue("default")
+    state.saveUiDensityMock.mockResolvedValue(undefined)
     state.loadTrayIconStyleMock.mockResolvedValue("bars")
     state.saveTrayIconStyleMock.mockResolvedValue(undefined)
     state.loadTrayShowPercentageMock.mockResolvedValue(false)
@@ -495,6 +503,23 @@ describe("App", () => {
 
     await userEvent.click(await screen.findByRole("radio", { name: "Used" }))
     expect(state.saveDisplayModeMock).toHaveBeenCalledWith("used")
+  })
+
+  it("applies compact interface size from saved settings", async () => {
+    state.loadUiDensityMock.mockResolvedValueOnce("compact")
+    render(<App />)
+    await waitFor(() => expect(state.invokeMock).toHaveBeenCalledWith("list_plugins"))
+    const panel = document.querySelector(".openusage-panel")
+    expect(panel).toHaveClass("ui-density-compact")
+    expect(panel).toHaveAttribute("data-ui-density", "compact")
+  })
+
+  it("updates interface size in settings", async () => {
+    render(<App />)
+    const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
+    await userEvent.click(settingsButtons[0])
+    await userEvent.click(await screen.findByRole("radio", { name: "Compact" }))
+    expect(state.saveUiDensityMock).toHaveBeenCalledWith("compact")
   })
 
   it("logs when saving display mode fails", async () => {

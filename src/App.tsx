@@ -19,6 +19,7 @@ import {
   arePluginSettingsEqual,
   DEFAULT_AUTO_UPDATE_INTERVAL,
   DEFAULT_DISPLAY_MODE,
+  DEFAULT_UI_DENSITY,
   DEFAULT_TRAY_ICON_STYLE,
   DEFAULT_TRAY_SHOW_PERCENTAGE,
   DEFAULT_THEME_MODE,
@@ -30,10 +31,12 @@ import {
   loadTrayShowPercentage,
   loadTrayIconStyle,
   loadThemeMode,
+  loadUiDensity,
   normalizePluginSettings,
   saveAutoUpdateInterval,
   saveDisplayMode,
   savePluginSettings,
+  saveUiDensity,
   saveTrayShowPercentage,
   saveTrayIconStyle,
   saveThemeMode,
@@ -42,6 +45,7 @@ import {
   type PluginSettings,
   type TrayIconStyle,
   type ThemeMode,
+  type UiDensity,
 } from "@/lib/settings"
 
 const PANEL_WIDTH = 400;
@@ -90,6 +94,7 @@ function App() {
   const [autoUpdateResetToken, setAutoUpdateResetToken] = useState(0)
   const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE)
   const [displayMode, setDisplayMode] = useState<DisplayMode>(DEFAULT_DISPLAY_MODE)
+  const [uiDensity, setUiDensity] = useState<UiDensity>(DEFAULT_UI_DENSITY)
   const [trayIconStyle, setTrayIconStyle] = useState<TrayIconStyle>(DEFAULT_TRAY_ICON_STYLE)
   const [trayShowPercentage, setTrayShowPercentage] = useState(DEFAULT_TRAY_SHOW_PERCENTAGE)
   const [maxPanelHeightPx, setMaxPanelHeightPx] = useState<number | null>(null)
@@ -533,6 +538,13 @@ function App() {
           console.error("Failed to load display mode:", error)
         }
 
+        let storedUiDensity = DEFAULT_UI_DENSITY
+        try {
+          storedUiDensity = await loadUiDensity()
+        } catch (error) {
+          console.error("Failed to load interface size:", error)
+        }
+
         let storedTrayIconStyle = DEFAULT_TRAY_ICON_STYLE
         try {
           storedTrayIconStyle = await loadTrayIconStyle()
@@ -556,6 +568,7 @@ function App() {
           setAutoUpdateInterval(storedInterval)
           setThemeMode(storedThemeMode)
           setDisplayMode(storedDisplayMode)
+          setUiDensity(storedUiDensity)
           setTrayIconStyle(storedTrayIconStyle)
           setTrayShowPercentage(normalizedTrayShowPercentage)
           const enabledIds = getEnabledPluginIds(normalized)
@@ -688,6 +701,13 @@ function App() {
       console.error("Failed to save display mode:", error)
     })
   }, [scheduleTrayIconUpdate])
+
+  const handleUiDensityChange = useCallback((density: UiDensity) => {
+    setUiDensity(density)
+    void saveUiDensity(density).catch((error) => {
+      console.error("Failed to save interface size:", error)
+    })
+  }, [])
 
   const handleTrayIconStyleChange = useCallback((style: TrayIconStyle) => {
     const mandatory = isTrayPercentageMandatory(style)
@@ -842,6 +862,8 @@ function App() {
           onThemeModeChange={handleThemeModeChange}
           displayMode={displayMode}
           onDisplayModeChange={handleDisplayModeChange}
+          uiDensity={uiDensity}
+          onUiDensityChange={handleUiDensityChange}
           trayIconStyle={trayIconStyle}
           onTrayIconStyleChange={handleTrayIconStyleChange}
           trayShowPercentage={trayShowPercentage}
@@ -867,7 +889,8 @@ function App() {
     <div ref={containerRef} className={`flex flex-col items-center bg-transparent ${IS_MACOS ? "p-6 pt-1.5" : "p-4 pb-2"}`}>
       {IS_MACOS && <div className="tray-arrow" />}
       <div
-        className="relative bg-card rounded-xl overflow-hidden select-none w-full border shadow-lg flex flex-col"
+        data-ui-density={uiDensity}
+        className={`openusage-panel relative bg-card rounded-xl overflow-hidden select-none w-full border shadow-lg flex flex-col ${uiDensity === "compact" ? "ui-density-compact" : ""}`}
         style={maxPanelHeightPx ? { maxHeight: `${maxPanelHeightPx - ARROW_OVERHEAD_PX}px` } : undefined}
       >
         <div className="flex flex-1 min-h-0 flex-row">
@@ -876,7 +899,7 @@ function App() {
             onViewChange={setActiveView}
             plugins={navPlugins}
           />
-          <div className="flex-1 flex flex-col px-3 pt-2 pb-1.5 min-w-0 bg-card dark:bg-muted/50">
+          <div className="panel-content flex-1 flex flex-col px-3 pt-2 pb-1.5 min-w-0 bg-card dark:bg-muted/50">
             <div className="relative flex-1 min-h-0">
               <div ref={scrollRef} className="h-full overflow-y-auto scrollbar-none">
                 {renderContent()}

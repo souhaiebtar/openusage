@@ -160,6 +160,83 @@ body,
   display: none;                  /* Chrome / Safari / WebKit */
 }
 
+/* Compact density mode: fit more rows without scrolling */
+.openusage-panel.ui-density-compact .panel-content {
+  padding: 0.4rem 0.6rem 0.25rem;
+}
+
+.openusage-panel.ui-density-compact .side-nav {
+  width: 2.5rem;
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+}
+
+.openusage-panel.ui-density-compact .side-nav-button {
+  padding: 0.375rem;
+}
+
+.openusage-panel.ui-density-compact .side-nav .size-6 {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.openusage-panel.ui-density-compact .provider-card > div:first-child {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.openusage-panel.ui-density-compact .provider-card h2 {
+  font-size: 1rem;
+  line-height: 1.25rem;
+}
+
+.openusage-panel.ui-density-compact .provider-card .space-y-4 {
+  row-gap: 0.625rem;
+}
+
+.openusage-panel.ui-density-compact .provider-card .mb-2 {
+  margin-bottom: 0.375rem;
+}
+
+.openusage-panel.ui-density-compact .provider-card .mb-1.5 {
+  margin-bottom: 0.25rem;
+}
+
+.openusage-panel.ui-density-compact .provider-card .mt-1.5 {
+  margin-top: 0.25rem;
+}
+
+.openusage-panel.ui-density-compact .settings-page {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  row-gap: 0.75rem;
+}
+
+.openusage-panel.ui-density-compact .settings-page h3 {
+  font-size: 1rem;
+}
+
+.openusage-panel.ui-density-compact .settings-page p {
+  font-size: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.openusage-panel.ui-density-compact .settings-page .bg-muted\/50.rounded-lg {
+  padding: 0.2rem;
+}
+
+.openusage-panel.ui-density-compact .settings-page .bg-muted\/50.rounded-lg [role="radio"] {
+  min-height: 1.75rem;
+  font-size: 0.75rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+.openusage-panel.ui-density-compact .panel-footer {
+  height: 1.75rem;
+  padding-top: 0.25rem;
+}
+
 /* Arrow pointing up toward the tray icon */
 .tray-arrow {
   width: 0;

@@ -16,6 +16,8 @@ export type ThemeMode = "system" | "light" | "dark";
 
 export type DisplayMode = "used" | "left";
 
+export type UiDensity = "default" | "compact";
+
 export type TrayIconStyle = "bars" | "circle" | "provider" | "textOnly";
 
 const SETTINGS_STORE_PATH = "settings.json";
@@ -23,18 +25,21 @@ const PLUGIN_SETTINGS_KEY = "plugins";
 const AUTO_UPDATE_SETTINGS_KEY = "autoUpdateInterval";
 const THEME_MODE_KEY = "themeMode";
 const DISPLAY_MODE_KEY = "displayMode";
+const UI_DENSITY_KEY = "uiDensity";
 const TRAY_ICON_STYLE_KEY = "trayIconStyle";
 const TRAY_SHOW_PERCENTAGE_KEY = "trayShowPercentage";
 
 export const DEFAULT_AUTO_UPDATE_INTERVAL: AutoUpdateIntervalMinutes = 15;
 export const DEFAULT_THEME_MODE: ThemeMode = "system";
 export const DEFAULT_DISPLAY_MODE: DisplayMode = "left";
+export const DEFAULT_UI_DENSITY: UiDensity = "default";
 export const DEFAULT_TRAY_ICON_STYLE: TrayIconStyle = "bars";
 export const DEFAULT_TRAY_SHOW_PERCENTAGE = false;
 
 const AUTO_UPDATE_INTERVALS: AutoUpdateIntervalMinutes[] = [5, 15, 30, 60];
 const THEME_MODES: ThemeMode[] = ["system", "light", "dark"];
 const DISPLAY_MODES: DisplayMode[] = ["used", "left"];
+const UI_DENSITIES: UiDensity[] = ["default", "compact"];
 const TRAY_ICON_STYLES: TrayIconStyle[] = ["bars", "circle", "provider", "textOnly"];
 
 export const AUTO_UPDATE_OPTIONS: { value: AutoUpdateIntervalMinutes; label: string }[] =
@@ -52,6 +57,11 @@ export const THEME_OPTIONS: { value: ThemeMode; label: string }[] =
 export const DISPLAY_MODE_OPTIONS: { value: DisplayMode; label: string }[] = [
   { value: "left", label: "Left" },
   { value: "used", label: "Used" },
+];
+
+export const UI_DENSITY_OPTIONS: { value: UiDensity; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "compact", label: "Compact" },
 ];
 
 export const TRAY_ICON_STYLE_OPTIONS: { value: TrayIconStyle; label: string }[] = [
@@ -182,6 +192,21 @@ export async function loadDisplayMode(): Promise<DisplayMode> {
 
 export async function saveDisplayMode(mode: DisplayMode): Promise<void> {
   await store.set(DISPLAY_MODE_KEY, mode);
+  await store.save();
+}
+
+function isUiDensity(value: unknown): value is UiDensity {
+  return typeof value === "string" && UI_DENSITIES.includes(value as UiDensity);
+}
+
+export async function loadUiDensity(): Promise<UiDensity> {
+  const stored = await store.get<unknown>(UI_DENSITY_KEY);
+  if (isUiDensity(stored)) return stored;
+  return DEFAULT_UI_DENSITY;
+}
+
+export async function saveUiDensity(density: UiDensity): Promise<void> {
+  await store.set(UI_DENSITY_KEY, density);
   await store.save();
 }
 

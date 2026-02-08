@@ -53,6 +53,8 @@ const defaultProps = {
   onThemeModeChange: vi.fn(),
   displayMode: "used" as const,
   onDisplayModeChange: vi.fn(),
+  uiDensity: "default" as const,
+  onUiDensityChange: vi.fn(),
   trayIconStyle: "bars" as const,
   onTrayIconStyleChange: vi.fn(),
   trayShowPercentage: false,
@@ -150,6 +152,20 @@ describe("SettingsPage", () => {
     )
     await userEvent.click(screen.getByText("Dark"))
     expect(onThemeModeChange).toHaveBeenCalledWith("dark")
+  })
+
+  it("renders and updates interface size", async () => {
+    const onUiDensityChange = vi.fn()
+    render(
+      <SettingsPage
+        {...defaultProps}
+        onUiDensityChange={onUiDensityChange}
+      />
+    )
+    expect(screen.getByText("Interface Size")).toBeInTheDocument()
+    expect(screen.getByText("Show more without scrolling")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("radio", { name: "Compact" }))
+    expect(onUiDensityChange).toHaveBeenCalledWith("compact")
   })
 
   it("updates display mode", async () => {

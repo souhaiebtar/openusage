@@ -42,7 +42,7 @@ function NavButton({ isActive, onClick, children, "aria-label": ariaLabel }: Nav
       onClick={onClick}
       aria-label={ariaLabel}
       className={cn(
-        "relative flex items-center justify-center w-full p-2.5 transition-colors",
+        "side-nav-button relative flex items-center justify-center w-full p-2.5 transition-colors",
         "hover:bg-accent",
         isActive
           ? "text-foreground before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-primary dark:before:bg-page-accent before:rounded-full"
@@ -66,7 +66,7 @@ export function SideNav({ activeView, onViewChange, plugins }: SideNavProps) {
   const isDark = useDarkMode()
 
   return (
-    <nav className="flex flex-col w-12 border-r bg-muted/50 dark:bg-card py-3">
+    <nav className="side-nav flex flex-col w-12 border-r bg-muted/50 dark:bg-card py-3">
       {/* Home */}
       <NavButton
         isActive={activeView === "home"}
