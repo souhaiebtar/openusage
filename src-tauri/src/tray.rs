@@ -2,7 +2,7 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Position};
 use tauri_plugin_store::StoreExt;
 
 use crate::panel::{position_panel_at_tray_icon, show_panel, hide_panel, is_panel_visible};
@@ -57,6 +57,22 @@ fn show_panel_with_init(app_handle: &AppHandle) {
 
 fn should_toggle_panel(button: MouseButton, button_state: MouseButtonState) -> bool {
     button == MouseButton::Left && button_state == MouseButtonState::Up
+}
+
+fn tray_click_icon_position(event_position: PhysicalPosition<f64>, rect_position: Position) -> Position {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = rect_position;
+        return Position::Physical(PhysicalPosition::new(
+            event_position.x.round() as i32,
+            event_position.y.round() as i32,
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        rect_position
+    }
 }
 
 fn load_tray_icon(app_handle: &AppHandle) -> tauri::Result<Image<'static>> {
@@ -164,6 +180,7 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
             if let TrayIconEvent::Click {
                 button,
                 button_state,
+                position,
                 rect,
                 ..
             } = event
@@ -180,7 +197,8 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
 
                     // Must show window before positioning to another monitor
                     show_panel(app_handle);
-                    position_panel_at_tray_icon(app_handle, rect.position, rect.size);
+                    let icon_position = tray_click_icon_position(position, rect.position);
+                    position_panel_at_tray_icon(app_handle, icon_position, rect.size);
                 }
             }
         })
@@ -191,7 +209,8 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::should_toggle_panel;
+    use super::{should_toggle_panel, tray_click_icon_position};
+    use tauri::{PhysicalPosition, Position};
     use tauri::tray::{MouseButton, MouseButtonState};
 
     #[test]
@@ -207,5 +226,35 @@ mod tests {
     #[test]
     fn does_not_toggle_panel_on_left_button_down() {
         assert!(!should_toggle_panel(MouseButton::Left, MouseButtonState::Down));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn uses_physical_click_position_on_windows() {
+        let resolved = tray_click_icon_position(
+            PhysicalPosition::new(1200.6, 800.4),
+            Position::Physical(PhysicalPosition::new(10, 20)),
+        );
+        match resolved {
+            Position::Physical(pos) => {
+                assert_eq!(pos.x, 1201);
+                assert_eq!(pos.y, 800);
+            }
+            _ => panic!("expected physical position"),
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn keeps_rect_position_on_non_windows() {
+        let rect_position = Position::Physical(PhysicalPosition::new(10, 20));
+        let resolved = tray_click_icon_position(PhysicalPosition::new(1200.6, 800.4), rect_position);
+        match resolved {
+            Position::Physical(pos) => {
+                assert_eq!(pos.x, 10);
+                assert_eq!(pos.y, 20);
+            }
+            _ => panic!("expected physical position"),
+        }
     }
 }
