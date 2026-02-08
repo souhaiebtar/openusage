@@ -17,8 +17,10 @@ Date: 2026-02-07
 - Release workflow runs on `v*` tags (and manual dispatch).
 - Builds Windows assets.
 - Publishes assets to GitHub Release.
+- Creates and uploads portable ZIP asset containing `openusage.exe`, `resources/`, and `icons/`.
 
 ## Acceptance
 
 - README contains actionable build + release instructions.
 - Workflow publishes release artifacts for Windows.
+- Release includes `OpenUsage-vX.Y.Z-windows-x64-portable.zip` for non-installer users.

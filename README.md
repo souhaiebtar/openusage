@@ -140,6 +140,7 @@ git push origin v0.5.0
 ```
 
 3. GitHub Actions builds and publishes Windows installers to the matching GitHub Release.
+   It also uploads a portable ZIP: `OpenUsage-vX.Y.Z-windows-x64-portable.zip` (extract and run `openusage.exe`).
 
 Manual trigger is also supported via **Actions > Publish** with a `vX.Y.Z` tag input.
 

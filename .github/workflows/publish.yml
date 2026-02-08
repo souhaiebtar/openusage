@@ -90,3 +90,31 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: false
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $releaseDir = "src-tauri\target\release"
+          $portableRoot = Join-Path $releaseDir "portable"
+          $portableDir = Join-Path $portableRoot "OpenUsage-$env:RELEASE_TAG-windows-x64-portable"
+          $portableBundleDir = "src-tauri\target\release\bundle\portable"
+          $zipPath = Join-Path $portableBundleDir "OpenUsage-$env:RELEASE_TAG-windows-x64-portable.zip"
+
+          Remove-Item $portableDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+          New-Item -ItemType Directory -Path $portableBundleDir -Force | Out-Null
+
+          Copy-Item (Join-Path $releaseDir "openusage.exe") $portableDir
+          Copy-Item (Join-Path $releaseDir "resources") $portableDir -Recurse
+          Copy-Item (Join-Path $releaseDir "icons") $portableDir -Recurse
+
+          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipPath -Force
+          "PORTABLE_ZIP_PATH=$zipPath" >> $env:GITHUB_ENV
+
+      - name: Upload portable ZIP to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload $env:RELEASE_TAG $env:PORTABLE_ZIP_PATH --clobber --repo $env:GITHUB_REPOSITORY
