@@ -38,6 +38,13 @@ describe("gemini plugin", () => {
     expect(() => plugin.probe(ctx)).toThrow("api-key")
   })
 
+  it("throws when auth type is explicitly unsupported", async () => {
+    const ctx = makeCtx()
+    ctx.host.fs.writeText(SETTINGS_PATH, JSON.stringify({ authType: "new-auth-mode" }))
+    const plugin = await loadPlugin()
+    expect(() => plugin.probe(ctx)).toThrow("unsupported auth type: new-auth-mode")
+  })
+
   it("throws when creds are missing", async () => {
     const ctx = makeCtx()
     const plugin = await loadPlugin()
@@ -178,6 +185,104 @@ describe("gemini plugin", () => {
     const result = plugin.probe(ctx)
     expect(result.plan).toBe("Workspace")
     expect(result.lines.find((line) => line.label === "Pro")).toBeTruthy()
+  })
+
+  it("refreshes token when loadCodeAssist is unauthorized and proceeds", async () => {
+    const ctx = makeCtx()
+    const nowMs = 1_700_000_000_000
+    vi.spyOn(Date, "now").mockReturnValue(nowMs)
+
+    ctx.host.fs.writeText(
+      CREDS_PATH,
+      JSON.stringify({
+        access_token: "stale-token",
+        refresh_token: "refresh-token",
+        id_token: makeJwt({ email: "me@example.com" }),
+        expiry_date: nowMs + 3600_000,
+      })
+    )
+    ctx.host.fs.writeText(
+      OAUTH2_PATH,
+      "const OAUTH_CLIENT_ID='client-id'; const OAUTH_CLIENT_SECRET='client-secret';"
+    )
+
+    let loadCodeAssistCalls = 0
+    ctx.host.http.request.mockImplementation((opts) => {
+      const url = String(opts.url)
+      if (url === LOAD_CODE_ASSIST_URL) {
+        loadCodeAssistCalls += 1
+        if (loadCodeAssistCalls === 1) return { status: 401, bodyText: "" }
+        return {
+          status: 200,
+          bodyText: JSON.stringify({
+            tier: "standard-tier",
+            cloudaicompanionProject: "gen-lang-client-555",
+          }),
+        }
+      }
+      if (url === TOKEN_URL) {
+        return { status: 200, bodyText: JSON.stringify({ access_token: "new-token", expires_in: 3600 }) }
+      }
+      if (url === QUOTA_URL) {
+        expect(opts.bodyText).toContain("gen-lang-client-555")
+        expect(opts.headers.Authorization).toBe("Bearer new-token")
+        return {
+          status: 200,
+          bodyText: JSON.stringify({
+            quotaBuckets: [{ modelId: "gemini-2.5-pro", remainingFraction: 0.2, resetTime: "2099-01-01T00:00:00Z" }],
+          }),
+        }
+      }
+      throw new Error("unexpected url: " + url)
+    })
+
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(loadCodeAssistCalls).toBe(2)
+    expect(result.plan).toBe("Paid")
+    expect(result.lines.find((line) => line.label === "Pro")).toBeTruthy()
+    const persisted = JSON.parse(ctx.host.fs.readText(CREDS_PATH))
+    expect(persisted.access_token).toBe("new-token")
+  })
+
+  it("throws session expired when loadCodeAssist stays unauthorized", async () => {
+    const ctx = makeCtx()
+    const nowMs = 1_700_000_000_000
+    vi.spyOn(Date, "now").mockReturnValue(nowMs)
+
+    ctx.host.fs.writeText(
+      CREDS_PATH,
+      JSON.stringify({
+        access_token: "token",
+        refresh_token: "refresh-token",
+        id_token: makeJwt({ email: "me@example.com" }),
+        expiry_date: nowMs + 3600_000,
+      })
+    )
+    ctx.host.fs.writeText(
+      OAUTH2_PATH,
+      "const OAUTH_CLIENT_ID='client-id'; const OAUTH_CLIENT_SECRET='client-secret';"
+    )
+
+    let loadCodeAssistCalls = 0
+    ctx.host.http.request.mockImplementation((opts) => {
+      const url = String(opts.url)
+      if (url === LOAD_CODE_ASSIST_URL) {
+        loadCodeAssistCalls += 1
+        return { status: 401, bodyText: "" }
+      }
+      if (url === TOKEN_URL) {
+        return { status: 200, bodyText: JSON.stringify({ access_token: "new-token", expires_in: 3600 }) }
+      }
+      if (url === QUOTA_URL) {
+        throw new Error("quota should not be called")
+      }
+      return { status: 404, bodyText: "" }
+    })
+
+    const plugin = await loadPlugin()
+    expect(() => plugin.probe(ctx)).toThrow("session expired")
+    expect(loadCodeAssistCalls).toBe(2)
   })
 
   it("throws session expired when quota request stays unauthorized", async () => {

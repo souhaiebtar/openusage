@@ -49,6 +49,7 @@
     if (authType === "vertex-ai") {
       throw "Gemini usage unavailable for vertex-ai auth. Use OAuth sign-in in Gemini CLI."
     }
+    throw "Gemini usage unavailable for unsupported auth type: " + authType + ". Use OAuth sign-in in Gemini CLI."
   }
   function decodeIdToken(ctx, idToken) {
     if (!idToken) return null
@@ -323,10 +324,25 @@
     if (flash) lines.push(toUsageLine(ctx, "Flash", flash))
     return lines
   }
-  function fetchLoadCodeAssist(ctx, accessToken) {
-    const resp = postJson(ctx, LOAD_CODE_ASSIST_URL, accessToken, { metadata: IDE_METADATA })
-    if (resp.status < 200 || resp.status >= 300) return null
-    return ctx.util.tryParseJson(resp.bodyText)
+  function fetchLoadCodeAssist(ctx, accessToken, creds) {
+    let currentToken = accessToken
+    const resp = ctx.util.retryOnceOnAuth({
+      request: function (token) {
+        return postJson(ctx, LOAD_CODE_ASSIST_URL, token || currentToken, { metadata: IDE_METADATA })
+      },
+      refresh: function () {
+        const refreshed = refreshToken(ctx, creds)
+        if (refreshed) currentToken = refreshed
+        return refreshed
+      },
+    })
+    if (ctx.util.isAuthStatus(resp.status)) {
+      throw "Gemini session expired. Run `gemini auth login` to authenticate."
+    }
+    if (resp.status < 200 || resp.status >= 300) {
+      return { data: null, accessToken: currentToken }
+    }
+    return { data: ctx.util.tryParseJson(resp.bodyText), accessToken: currentToken }
   }
   function fetchQuotaWithRetry(ctx, accessToken, creds, projectId) {
     let currentToken = accessToken
@@ -367,7 +383,9 @@
       else if (!accessToken) throw "Not logged in. Run `gemini auth login` to authenticate."
     }
     const idTokenPayload = decodeIdToken(ctx, creds.id_token)
-    const loadCodeAssistData = fetchLoadCodeAssist(ctx, accessToken)
+    const loadCodeAssistResult = fetchLoadCodeAssist(ctx, accessToken, creds)
+    accessToken = loadCodeAssistResult.accessToken
+    const loadCodeAssistData = loadCodeAssistResult.data
     const tier = readFirstStringDeep(loadCodeAssistData, ["tier", "userTier", "subscriptionTier"])
     const plan = mapTierToPlan(tier, idTokenPayload)
     const projectId = discoverProjectId(ctx, accessToken, loadCodeAssistData)
